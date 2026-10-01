@@ -1,0 +1,6 @@
+# Keep the repository LF-only: this is a Node/ESM package and the browser half is
+# served byte-for-byte, so line ending churn would show up as noisy diffs.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

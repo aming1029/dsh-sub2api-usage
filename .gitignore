@@ -1,0 +1,4 @@
+﻿.state*/
+*.log
+.state-run-*.txt
+node_modules/

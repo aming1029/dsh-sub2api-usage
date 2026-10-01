@@ -1,0 +1,9 @@
+# dsh-sub2api-usage — 把一个 Sub2API 用量面板插进 profile 的加载器树。
+#
+# Host 半区：注册 /sub2api-usage/api/{state,config,query,test}，由 Node 侧发上游
+#           请求（不需要站点开 CORS，凭证不进浏览器），只服务回环地址。
+# Client 半区：sidebar.footer.action（余额小条）+ sidebar.panellist（面板图标）
+#           + main 键 sub2api-usage（用量详情页，含自定义接口设置）。
+- insert:
+    - id: sub2api-usage
+      name: dsh-sub2api-usage
