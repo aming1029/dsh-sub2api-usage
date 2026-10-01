@@ -19,8 +19,8 @@ import { fileURLToPath } from 'node:url';
 
 const PACKAGE = 'dsh-sub2api-usage';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-const FILES = ['package.json', 'cordis.patch.yml', 'README.md'];
-const DIRS = ['lib', 'scripts', 'test'];
+const FILES = ['package.json', 'cordis.patch.yml', 'README.md', 'LICENSE'];
+const DIRS = ['lib', 'scripts', 'test', 'assets'];
 
 function argValue(flag) {
   const index = process.argv.indexOf(flag);
@@ -60,7 +60,6 @@ async function copyFile(from, to) {
   await mkdir(dirname(to), { recursive: true });
   await writeFile(to, bytes);
 }
-
 async function copyTree(fromDir, toDir) {
   await mkdir(toDir, { recursive: true });
   for (const entry of await readdir(fromDir, { withFileTypes: true })) {
