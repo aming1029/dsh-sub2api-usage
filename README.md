@@ -10,7 +10,7 @@
 
 ![侧边栏小条与用量面板](assets/overview.png)
 
-**状态** v1.0.0 · **测试** 107 项 `node:test`，另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 107 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
 
 ## 目录
 
@@ -300,6 +300,8 @@ node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（�
 ```
 
 > `npm test` 逐个点名测试文件是有原因的：`node --test`（不给参数）会把 `test/` 下**所有** `.mjs` 都当测试文件跑，包括 `harness.mjs` 和 `mock-sub2api.mjs`——后者一旦被当测试文件执行就会起一个永不退出的假站点，整个测试跟着挂住。所以 mock 的 CLI 入口放在 `scripts/mock-sub2api.mjs`，`test/` 下的模块保持零副作用，`test/readme.test.mjs` 里有一条测试盯着 `package.json` 的测试清单不能漏文件。
+
+CI（`.github/workflows/test.yml`）就是这三个版本上跑这一条 `npm test`，零依赖、不需要 `npm install`。
 
 `test/readme.test.mjs` 会检查这份文档本身：截图路径存在、目录锚点指向真实标题、写出来的默认值和 `lib/core.js` 的 `DEFAULT_CONFIG` 一致、脚本接口和 `lib/index.js` 注册的路由对得上。
 
