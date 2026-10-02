@@ -3,6 +3,10 @@
  * manual "point the plugin at this mock" round trip).
  *
  *   node test/mock-sub2api.mjs [port]
+ *
+ * Set MOCK_ANY_KEY=1 to accept any credential. That is only for capturing
+ * screenshots from a real install without retyping its key; the tests never set
+ * it, so the strict 401 paths stay covered.
  */
 import { createServer } from 'node:http';
 
@@ -11,6 +15,7 @@ export const SITE_KEY = 'sk-testkey1234567890';
 export const USER_TOKEN = 'tok-user-123';
 export const EMAIL = 'alice@example.com';
 export const PASSWORD = 'secret-password';
+export const ANY_KEY = process.env.MOCK_ANY_KEY === '1';
 
 const USERS = {
   123: { id: 123, email: 'alice@example.com', username: 'alice', balance: 42.5, frozen_balance: 1.25, total_recharged: 300, status: 'active' },
@@ -93,7 +98,7 @@ export function createMockSub2Api() {
     }
 
     if (url.pathname === '/v1/usage') {
-      if (bearer !== SITE_KEY) {
+      if (bearer !== SITE_KEY && !ANY_KEY) {
         send(res, 401, { code: 'INVALID_API_KEY', message: 'Invalid API key' });
         return;
       }
@@ -133,7 +138,13 @@ export function createMockSub2Api() {
             day.setUTCDate(day.getUTCDate() - (13 - index));
             const iso = day.toISOString().slice(0, 10);
             const wave = [0.2, 0.35, 0.1, 0.8, 1.4, 0.6, 0.25, 0.9, 1.1, 0.4, 0.15, 0.7, 1.2, 0.9][index] ?? 0.5;
-            return { date: iso, cost_usd: Number((wave * 3).toFixed(2)), requests: 100 + index * 7 };
+            return {
+              date: iso,
+              cost_usd: Number((wave * 3).toFixed(2)),
+              actual_cost: Number((wave * 3 * 0.92).toFixed(2)),
+              requests: 100 + index * 7,
+              total_tokens: 1_200_000 + index * 640_000,
+            };
           }),
         }),
       );

@@ -185,7 +185,15 @@ test('summarize extracts the documented /v1/usage shape', () => {
             rate_limits: [{ window: '1m', used: 3, limit: 60, remaining: 57 }],
             total: { requests: 4210, tokens: 1234567 },
             model_stats: [{ model: 'a', requests: 2, cost_usd: 1 }],
-            daily_usage: [{ date: '2026-09-30', cost_usd: 0.5 }],
+            daily_usage: [
+              {
+                date: '2026-09-30',
+                cost_usd: 0.5,
+                actual_cost: 0.4,
+                requests: 128,
+                total_tokens: 55996144,
+              },
+            ],
           },
         },
       },
@@ -202,8 +210,44 @@ test('summarize extracts the documented /v1/usage shape', () => {
   assert.equal(snapshot.totals.length, 2);
   assert.equal(snapshot.models[0].name, 'a');
   assert.equal(snapshot.daily[0].date, '2026-09-30');
+  // The trend chart switches metrics from these, so they must survive normalize.
+  assert.equal(snapshot.daily[0].requests, 128);
+  assert.equal(snapshot.daily[0].tokens, 55996144);
+  assert.equal(snapshot.daily[0].actual, 0.4);
   assert.equal(snapshot.fields.length > 0, true);
   assert.equal(snapshot.warnings.length, 0);
+});
+
+test('daily usage given as an object of days keeps requests and tokens', () => {
+  const snapshot = summarize({
+    config: normalizeConfig({ mode: 'key', credential: 'sk-abcdefghijklmnop' }),
+    plan: { mode: 'key' },
+    steps: [
+      {
+        id: 'usage',
+        label: 'Key 用量',
+        url: 'https://x/v1/usage',
+        status: 200,
+        json: {
+          code: 0,
+          data: {
+            daily_usage: {
+              '2026-09-29': { cost_usd: 0.25, requests: 12, total_tokens: 3400 },
+              '2026-09-30': 0.5,
+            },
+          },
+        },
+      },
+    ],
+    at: NOW,
+  });
+  assert.deepEqual(snapshot.daily.map((day) => day.date), ['2026-09-29', '2026-09-30']);
+  assert.equal(snapshot.daily[0].value, 0.25);
+  assert.equal(snapshot.daily[0].requests, 12);
+  assert.equal(snapshot.daily[0].tokens, 3400);
+  // A bare number per day still normalizes; the extra metrics stay undefined.
+  assert.equal(snapshot.daily[1].value, 0.5);
+  assert.equal(snapshot.daily[1].requests, undefined);
 });
 
 test('summarize honours an explicit custom balance pointer over auto-detection', () => {

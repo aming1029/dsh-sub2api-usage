@@ -344,3 +344,153 @@ test('the poller loads state and honours intervalSec (0 = manual only)', async (
   assert.equal(typeof manual.start(), 'function');
   void findAll(harness.React.createElement('div'), () => false);
 });
+
+// ---------------------------------------------------------------- trend chart
+//
+// The chart maths live in the bundle (the browser half may only require react),
+// so these tests pin the geometry, labels and interactions through the rendered
+// SVG. With no ResizeObserver in the harness the width falls back to 640, which
+// makes every coordinate below exact.
+
+const THREE_DAYS = [
+  { date: '2026-09-29', value: 0, requests: 0, tokens: 0 },
+  { date: '2026-09-30', value: 1, requests: 1000, tokens: 25000 },
+  { date: '2026-10-01', value: 2, requests: 4200, tokens: 55996144, actual: 1.5 },
+];
+
+/** Render the main panel on the overview tab with a given daily series. */
+function renderOverview(harness, registrations, daily, store) {
+  const main = registrations.slots.find((slot) => slot.options.name === 'main');
+  const state = {
+    config: { ...CONFIG, rangeDays: 30 },
+    snapshot: { ...SNAPSHOT, daily },
+    error: null,
+    phase: 'ready',
+    busy: false,
+    toast: null,
+    queriedAt: SNAPSHOT.at,
+    files: null,
+  };
+  const props = { ...main.options.inject(), store: store ?? fakeStore(state) };
+  return { tree: harness.mount(harness.React.createElement(main.component, props)), props };
+}
+
+const byClass = (className) => (node) => node.props?.className === className;
+
+test('the trend chart plots the series against a nice axis', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS);
+
+  // plot box: left 46, right 640-14, top 12, bottom 176-22
+  const line = findNode(tree, byClass('s2u-chart-line'));
+  assert.equal(line.props.d, 'M46 154 L336 83 L626 12');
+  const area = findNode(tree, byClass('s2u-chart-area'));
+  assert.equal(area.props.d, 'M46 154 L336 83 L626 12 L626 154 L46 154 Z');
+
+  const labels = findAll(tree, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.deepEqual(labels, ['$2.00', '$1.50', '$1.00', '$0.50', '$0.00', '09-29', '09-30', '10-01']);
+  assert.deepEqual(findAll(tree, byClass('s2u-chart-hit')).length, 3, '每有一个数据点就有一条悬停带');
+});
+
+test('the chart survives a flat zero series and a single day', () => {
+  const { registrations, harness } = setUpPlugin();
+  const flat = renderOverview(harness, registrations, [
+    { date: '2026-09-30', value: 0 },
+    { date: '2026-10-01', value: 0 },
+  ]).tree;
+  // An all-zero series still gets a real axis instead of a divide-by-zero.
+  assert.equal(findNode(flat, byClass('s2u-chart-line')).props.d, 'M46 154 L626 154');
+  const flatLabels = findAll(flat, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.deepEqual(flatLabels, ['$1.00', '$0.75', '$0.50', '$0.25', '$0.00', '09-30', '10-01']);
+
+  const single = renderOverview(harness, registrations, [{ date: '2026-10-01', value: 5 }]).tree;
+  const dot = findNode(single, byClass('s2u-chart-dot'));
+  assert.ok(dot, 'a one-day range still shows its point');
+  assert.equal(dot.props.cx, 336);
+  assert.equal(findNode(single, byClass('s2u-chart-area')), undefined, '没有面积可画');
+
+  const none = renderOverview(harness, registrations, []).tree;
+  assert.match(textOf(none), /该区间没有日用量数据/);
+});
+
+test('switching the metric redraws the axis in that unit', () => {
+  const { registrations, harness } = setUpPlugin();
+  const store = fakeStore({ config: { ...CONFIG, rangeDays: 30 }, snapshot: { ...SNAPSHOT, daily: THREE_DAYS }, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS, store);
+
+  const tabs = findAll(tree, (node) => node.type === 'button' && ['花费', '请求', 'Tokens'].includes(node.props.children));
+  assert.deepEqual(tabs.map((node) => node.props.children), ['花费', '请求', 'Tokens']);
+
+  const requestsTab = tabs.find((node) => node.props.children === '请求');
+  requestsTab.props.onClick();
+  const countTree = harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+  assert.match(textOf(countTree), /5,200 次/, '合计按请求数展示');
+  const countLabels = findAll(countTree, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.deepEqual(countLabels, ['6000', '4500', '3000', '1500', '0', '09-29', '09-30', '10-01']);
+  // The series itself changed, so the geometry must have changed too.
+  assert.equal(findNode(countTree, byClass('s2u-chart-line')).props.d, 'M46 154 L336 130.33 L626 54.6');
+
+  const tokensTab = findAll(countTree, (node) => node.type === 'button' && node.props.children === 'Tokens')[0];
+  tokensTab.props.onClick();
+  const tokenTree = harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+  const tokenLabels = findAll(tokenTree, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.deepEqual(tokenLabels, ['60M', '45M', '30M', '15M', '0', '09-29', '09-30', '10-01']);
+});
+
+test('hovering a day opens a readout and leaving closes it', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS);
+  assert.equal(findNode(tree, byClass('s2u-chart-tip')), undefined);
+
+  const bands = findAll(tree, byClass('s2u-chart-hit'));
+  bands[2].props.onMouseEnter();
+  const hovered = harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+  const tip = findNode(hovered, byClass('s2u-chart-tip'));
+  assert.ok(tip, '悬停后出现读数框');
+  assert.equal(tip.props['data-tip'], '2026-10-01');
+  const tipText = textOf(tip);
+  assert.match(tipText, /2026-10-01/);
+  assert.match(tipText, /\$2\.00/, '花费取精确值');
+  assert.match(tipText, /4,200 次/);
+  assert.match(tipText, /55,996,144/);
+  assert.match(tipText, /实际扣费 \$1\.50/);
+  // The hovered band is marked and the crosshair is drawn.
+  assert.equal(findAll(hovered, byClass('s2u-chart-hit')).filter((node) => node.props['data-on'] === 'true').length, 1);
+  assert.ok(findNode(hovered, byClass('s2u-chart-cross')));
+
+  findNode(hovered, byClass('s2u-chart-svg')).props.onMouseLeave();
+  const cleared = harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+  assert.equal(findNode(cleared, byClass('s2u-chart-tip')), undefined);
+});
+
+test('arrow keys walk the series for keyboard users', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS);
+  const svg = findNode(tree, byClass('s2u-chart-svg'));
+  const remount = () => harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+
+  svg.props.onKeyDown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(findNode(remount(), byClass('s2u-chart-tip')).props['data-tip'], '2026-09-29');
+  findNode(remount(), byClass('s2u-chart-svg')).props.onKeyDown({ key: 'ArrowRight', preventDefault() {} });
+  assert.equal(findNode(remount(), byClass('s2u-chart-tip')).props['data-tip'], '2026-09-30');
+  findNode(remount(), byClass('s2u-chart-svg')).props.onKeyDown({ key: 'ArrowLeft', preventDefault() {} });
+  assert.equal(findNode(remount(), byClass('s2u-chart-tip')).props['data-tip'], '2026-09-29');
+  // Anything else is ignored rather than throwing.
+  assert.doesNotThrow(() => findNode(remount(), byClass('s2u-chart-svg')).props.onKeyDown({ key: 'Tab' }));
+});
+
+test('range shortcuts re-save rangeDays and refresh', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const store = fakeStore({ config: { ...CONFIG, rangeDays: 30 }, snapshot: { ...SNAPSHOT, daily: THREE_DAYS }, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store);
+
+  const ranges = findAll(tree, (node) => node.type === 'button' && /^\d+ 天$/.test(node.props.children));
+  assert.deepEqual(ranges.map((node) => node.props.children), ['7 天', '14 天', '30 天', '90 天']);
+  assert.equal(ranges.find((node) => node.props.children === '30 天').props['data-active'], 'true', '当前区间高亮');
+
+  ranges.find((node) => node.props.children === '7 天').props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(store.calls.save, 1);
+  assert.deepEqual(store.calls.lastPatch, { rangeDays: 7 });
+  assert.equal(store.calls.query, 1, '改完区间立刻重查');
+});
