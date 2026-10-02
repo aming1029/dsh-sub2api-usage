@@ -134,10 +134,14 @@ function setUpPlugin() {
 
 function fakeStore(state) {
   const listeners = new Set();
-  const calls = { query: 0, save: 0, test: 0, load: 0, clearToast: 0 };
+  const calls = { query: 0, save: 0, test: 0, load: 0, clearToast: 0, notify: null };
+  let current = state;
   return {
     calls,
-    get: () => state,
+    get: () => current,
+    // The panel reads store.get(), so a store handed to renderOverview() must
+    // expose the same state the helper rendered with.
+    setState(next) { current = next; },
     subscribe(listener) {
       listeners.add(listener);
       return () => listeners.delete(listener);
@@ -147,6 +151,7 @@ function fakeStore(state) {
     save(patch) { calls.save += 1; calls.lastPatch = patch; return Promise.resolve({ ok: true, config: CONFIG, changed: ['baseUrl'] }); },
     test(candidate) { calls.test += 1; calls.lastCandidate = candidate; return Promise.resolve({ ok: true, snapshot: SNAPSHOT }); },
     clearToast() { calls.clearToast += 1; },
+    notify(message) { calls.notify = message; },
     start: () => () => {},
   };
 }
@@ -374,7 +379,9 @@ function renderOverview(harness, registrations, daily, store, extra) {
     files: null,
     ...(extra ?? {}),
   };
-  const props = { ...main.options.inject(), store: store ?? fakeStore(state) };
+  const resolved = store ?? fakeStore(state);
+  if (typeof resolved.setState === 'function') resolved.setState(state);
+  const props = { ...main.options.inject(), store: resolved };
   return { tree: harness.mount(harness.React.createElement(main.component, props)), props };
 }
 
@@ -726,5 +733,152 @@ test('manual-only refresh is called out in the hourly footer', () => {
   })).tree;
   assert.equal(/当前刷新间隔是 0/.test(textOf(auto)), false);
 });
+
+// ------------------------------------------------------------------- exporting
+//
+// The panel is the only place these numbers exist, so export reads what is on
+// screen: the CSV must line up row-by-row with the chart, holes included.
+
+/** Replaces the clipboard with a recorder; returns the captured strings. */
+function stubClipboard() {
+  const copied = [];
+  Object.defineProperty(globalThis, 'navigator', {
+    value: { clipboard: { writeText: (text) => { copied.push(text); return Promise.resolve(); } } },
+    configurable: true,
+    writable: true,
+  });
+  return copied;
+}
+
+const exportButton = (tree, key) => findNode(tree, (node) => node.props?.['data-export'] === key);
+
+test('the hourly table lists every slot, newest first, holes included', () => {
+  const { registrations, harness } = setUpPlugin();
+  const partial = {
+    ...FOUR_HOURS,
+    buckets: FOUR_HOURS.buckets.map((bucket) => (bucket.hour === '2026-09-30T23:00' ? { ...bucket, partial: true, spanMin: 148 } : bucket)),
+  };
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({ hourly: partial }));
+
+  const details = findNode(tree, byClass('s2u-hourly'));
+  assert.ok(details, '按小时视图下面要有一张明细表');
+  assert.equal(details.type, 'details');
+  const summary = textOf(findNode(details, (node) => node.type === 'summary'));
+  assert.match(summary, /逐小时明细（3 小时有数据 · 1 小时无采样，最新在上）/);
+
+  const body = findNode(details, (node) => node.type === 'tbody');
+  const rows = findAll(body, (node) => node.type === 'tr');
+  assert.deepEqual(rows.map((row) => row.props['data-hour']),
+    ['2026-10-01T01:00', '2026-10-01T00:00', '2026-09-30T23:00', '2026-09-30T22:00'],
+    '最新的小时排在最上面');
+  const header = findAll(findNode(details, (node) => node.type === 'thead'), (node) => node.type === 'th').map((node) => node.props.children);
+  assert.deepEqual(header, ['小时', '花费', '请求', 'Tokens', '实际扣费', '备注']);
+
+  const cells = (row) => findAll(row, (node) => node.type === 'td').map((node) => (node.props && node.props.children));
+  assert.deepEqual(cells(rows[0]), ['2026-10-01 01:00', '$1.50', '30', '3,000', '—', '']);
+  assert.deepEqual(cells(rows[1]), ['2026-10-01 00:00', '—', '—', '—', '—', '无采样（插件当时没运行）']);
+  assert.deepEqual(cells(rows[2]), ['2026-09-30 23:00', '$1.00', '20', '2,000', '—', '含中断时段']);
+  assert.equal(rows[1].props['data-missing'], 'true');
+  assert.equal(rows[2].props['data-missing'], 'false');
+
+  // The day view has nothing to tabulate.
+  const daily = renderOverview(harness, registrations, THREE_DAYS).tree;
+  assert.equal(findNode(daily, byClass('s2u-hourly')) ?? null, null);
+  // Nor does an empty hour window: nothing on screen means nothing to export.
+  const empty = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({ hourly: { ...FOUR_HOURS, buckets: [] } })).tree;
+  assert.equal(findNode(empty, byClass('s2u-actions')) ?? null, null);
+});
+
+test('复制 CSV copies exactly the rows the chart is showing', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const copied = stubClipboard();
+  const store = fakeStore({ config: CONFIG, snapshot: null, hourly: null, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store, hourlyState());
+
+  exportButton(tree, 'copy-csv').props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(copied.length, 1);
+  const csv = copied[0];
+  assert.equal(csv.startsWith('\ufeff'), true, 'BOM：Excel 打开中文表头才不会乱码');
+  assert.equal(csv.includes('\r\n'), true, 'CRLF 换行');
+  const lines = csv.replace(/^\ufeff/, '').trim().split('\r\n');
+  assert.equal(lines[0], '小时,花费,请求,Tokens,实际扣费,备注');
+  assert.equal(lines.length, 5, '表头 + 4 个小时，没采样的那小时也占一行');
+  assert.equal(lines[1], '2026-09-30 22:00,0.5,10,1000,0.6,');
+  assert.equal(lines[3], '2026-10-01 00:00,,,,,无采样');
+  assert.match(store.calls.notify, /已复制 CSV：3 行/);
+});
+
+test('下载 CSV saves a named file and also copies, because a blocked download cannot be detected', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const copied = stubClipboard();
+  const saved = [];
+  const originalCreate = globalThis.document.createElement;
+  globalThis.document.createElement = (tag) => {
+    const element = originalCreate(tag);
+    element.click = () => saved.push({ tag, href: element.href, download: element.download });
+    return element;
+  };
+  try {
+    const store = fakeStore({ config: CONFIG, snapshot: null, hourly: null, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+    const { tree } = renderOverview(harness, registrations, THREE_DAYS, store, hourlyState());
+    exportButton(tree, 'save-csv').props.onClick();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].tag, 'a');
+    assert.equal(saved[0].download, 'sub2api-usage-hourly-202610010100.csv');
+    assert.match(String(saved[0].href), /^blob:/);
+    assert.equal(copied.length, 1, '同一份内容也进剪贴板');
+    assert.equal(
+      copied[0],
+      '\ufeff小时,花费,请求,Tokens,实际扣费,备注\r\n'
+      + '2026-09-30 22:00,0.5,10,1000,0.6,\r\n'
+      + '2026-09-30 23:00,1,20,2000,,\r\n'
+      + '2026-10-01 00:00,,,,,无采样\r\n'
+      + '2026-10-01 01:00,1.5,30,3000,,\r\n',
+    );
+    assert.match(store.calls.notify, /已触发下载 sub2api-usage-hourly-202610010100\.csv，同一份内容也复制到了剪贴板/);
+  } finally {
+    globalThis.document.createElement = originalCreate;
+  }
+
+  // No clickable anchor (a harness without DOM, a hardened browser): copy instead
+  // of silently doing nothing.
+  const store = fakeStore({ config: CONFIG, snapshot: null, hourly: null, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store, hourlyState());
+  exportButton(tree, 'save-csv').props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(copied.length, 2, '下载不成时靠剪贴板兜底');
+  assert.match(store.calls.notify, /这个环境不让下载，已复制 CSV：3 行/);
+});
+
+test('复制 JSON hands over the same snapshot the panel is rendering', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const copied = stubClipboard();
+  const store = fakeStore({ config: CONFIG, snapshot: null, hourly: null, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store, hourlyState());
+
+  exportButton(tree, 'copy-json').props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const payload = JSON.parse(copied[0]);
+  assert.equal(payload.granularity, 'hour');
+  assert.deepEqual(payload.snapshot.daily, THREE_DAYS);
+  assert.equal(payload.snapshot.headline.balance, 12.34);
+  assert.equal(payload.hourly.hours, 4);
+  assert.equal(typeof payload.exportedAt, 'string');
+  assert.match(store.calls.notify, /已复制完整 JSON 快照/);
+
+  // The day view exports the day series instead.
+  const dayTree = renderOverview(harness, registrations, THREE_DAYS).tree;
+  exportButton(dayTree, 'copy-csv').props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+  const dayLines = copied[1].replace(/^\ufeff/, '').trim().split('\r\n');
+  assert.equal(dayLines[0], '日期,花费,请求,Tokens,实际扣费,备注');
+  assert.equal(dayLines[1], '2026-09-29,0,0,0,,');
+  assert.equal(dayLines[3], '2026-10-01,2,4200,55996144,1.5,');
+});
+
 
 
