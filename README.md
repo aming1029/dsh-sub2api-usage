@@ -1,119 +1,279 @@
 # dsh-sub2api-usage
 
-把 Sub2API 的余额 / 用量搬进 [DeepSeek Harness](https://github.com/deepseek-ai) 的左侧边栏：
+把 Sub2API 的余额和用量搬进 [DeepSeek Harness](https://github.com/deepseek-ai) 的左侧边栏：底部常驻一条实时余额，点开是完整用量面板，**查询接口的每一部分都能在界面上改**。
+
+> **English** — A DeepSeek Harness sidebar plugin for Sub2API: an always-visible balance chip at the bottom of the sidebar, a full usage panel (balance / quota / subscription / daily / per-model / rate limits / raw response), and a settings tab where the base URL, mode, paths, headers and JSON pointers are all customisable. Every upstream request is issued by the host process, so your Sub2API site needs no CORS and the credential never reaches the page.
+>
+> ```powershell
+> dsh plugin --profile desktop add github:aming1029/dsh-sub2api-usage
+> ```
+
+![侧边栏小条与用量面板](assets/overview.png)
+
+**状态** v1.0.0 · **测试** 70 项 `node:test`，另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+
+## 目录
+
+- [它能做什么](#它能做什么)
+- [安装](#安装)
+- [快速开始](#快速开始)
+- [面板说明](#面板说明)
+- [查询模式](#查询模式)
+- [设置项参考](#设置项参考)
+- [JSON 指针怎么写](#json-指针怎么写)
+- [宿主 HTTP 接口](#宿主-http-接口脚本调用)
+- [配置文件](#配置文件)
+- [安全边界](#安全边界)
+- [排错](#排错)
+- [开发](#开发)
+- [更新与卸载](#更新与卸载)
+- [适配别的站点](#适配别的站点)
+
+## 它能做什么
 
 | 位置 | 内容 |
 | --- | --- |
-| 侧边栏底部（设置旁边） | 实时余额小条（`$12.34 用量`），点击直接打开面板 |
+| 侧边栏底部（「设置」旁边） | 常驻余额小条：`$12.34 用量`，带状态圆点，点一下打开面板 |
 | 侧边栏图标区 | 一个「Sub2API 用量」图标，和「插件 / 自动化任务」并列 |
-| 主内容区 | 完整用量详情：余额、额度、订阅日/周/月、按天用量、模型用量、限流窗口、原始响应 |
-| 面板「设置」页 | 查询接口全部可自定义：服务地址、模式、凭证、路径、字段指针、刷新间隔 |
+| 主面板 · 概览 | 钱包余额、账户、剩余额度；额度使用条；订阅日/周/月；按天用量柱状图；模型用量；限流窗口 |
+| 主面板 · 明细 | 识别到的字段清单、每个上游请求的状态码、**原始响应 JSON** |
+| 主面板 · 设置 | 服务地址、模式、凭证、路径、JSON 指针、刷新间隔……全部可改 |
 
-![侧边栏底部小条与用量面板](assets/overview.png)
-
-许可证：MIT（见 [LICENSE](LICENSE)）。
+三种凭证（管理员 Key / 站点 Key / 账号密码）和「完全自定义请求」都支持，不写死任何一种部署；后台按间隔自动刷新（默认 120 秒），余额低于阈值时小条和图标冒黄点。
 
 ## 安装
 
-从 GitHub 安装：
+### 前置条件
+
+- DeepSeek Harness，且命令行里有 `dsh`（本仓库按 `--profile desktop` 举例，换成你自己的 profile 名）。
+- Node ≥ 18（`package.json` 的 `engines` 要求）。
+- 一个可访问的 Sub2API 部署，以及下面任意一种凭证。
+
+### 从 GitHub 安装
 
 ```powershell
 dsh plugin --profile desktop add github:aming1029/dsh-sub2api-usage
 ```
 
-或者先 `git clone` 到本地，再按路径安装：
+### 从本地目录安装
 
 ```powershell
-dsh plugin --profile desktop add file:<克隆下来的目录>
+git clone https://github.com/aming1029/dsh-sub2api-usage
+dsh plugin --profile desktop add file:D:/path/to/dsh-sub2api-usage
 ```
 
-装好后**不用重启**：宿主的插件管理器会把它加进加载器树并即时生效，已经打开的页面通过 HMR 自动挂载。
-若页面没变化，按 `F5` 刷新一次。
+> **装不上？** `dsh plugin add github:…` 需要能从你这台机器访问 `github.com`（git 走 443）。
+> 网络受限时用上面的 `file:` 方式，或者只把目录拷过来（`lib/`、`cordis.patch.yml`、`package.json` 三个是运行必需的）。
 
-## 首次使用
+### 确认装好了
 
-点侧边栏的「Sub2API 用量」→「设置」，三种凭证任选一种：
+装好后**不用重启**：插件管理器会把它加进加载器树并即时生效，已经在开的页面通过 HMR 自动挂载。侧边栏底部应该立刻出现「未配置 用量」小条。
+
+没出现就按 `F5` 刷新页面；还是没有，看[排错](#排错)。
+
+## 快速开始
+
+1. 点侧边栏底部的余额小条（或图标区的「Sub2API 用量」）打开面板。
+2. 切到「设置」，按下面的表选一种模式填凭证。
+3. 点「保存并查询」。想先验证再保存，就点「测试连接（不保存）」——它用当前填的内容真发一次请求，但不写盘。
 
 | 模式 | 填什么 | 能查到 |
 | --- | --- | --- |
-| 站点 Key | `sk-…` | 该 Key 的钱包余额、订阅日/周/月用量、限流窗口、区间内模型与按天用量 |
+| 站点 Key | `sk-…` | 该 Key 的钱包余额、订阅日/周/月、限流窗口、区间内的模型与按天用量 |
 | 管理员 | 后台「系统设置 → 管理员 API Key」生成的 `admin-…`；填「用户 ID」查单个用户，留空或勾选「拉取用户列表」查列表 | 任意用户的 `balance / frozen_balance / total_recharged` |
 | 账号密码 | 邮箱 + 密码（或直接填一个已登录的访问令牌） | 当前登录账号 |
-| 自定义请求 | 方法 / 路径 / 请求头 / 请求体 + JSON 指针 | 任何返回余额的接口 |
+| 自定义请求 | 方法 / 路径 / 请求头 / 请求体（+ 可选的 JSON 指针） | 任何返回余额的接口 |
 
-「自动识别」会在不指定模式时按凭证形状判断：`admin-…` → 管理员，`sk-…` → 站点 Key，JWT 或账号密码 → 用户。
+不确定用哪种就选默认的「自动识别」：它按凭证形状判断——`admin-…` → 管理员，`sk-…` → 站点 Key，JWT 或邮箱密码 → 账号。
 
-填完点「保存并查询」；想先验证再保存就点「测试连接（不保存）」。
+## 面板说明
 
-## 它打的是哪些接口
+### 侧边栏小条
 
-| 模式 | 请求 | 认证 |
-| --- | --- | --- |
-| key | `GET /v1/usage?start_date=&end_date=&timezone=` | `Authorization: Bearer sk-…` |
-| admin（单用户） | `GET /api/v1/admin/users/:id` | `x-api-key: admin-…` 或管理员 `Bearer <JWT>` |
-| admin（列表） | `GET /api/v1/admin/users?search=&page=&page_size=&sort_by=&sort_order=` | 同上 |
-| user（账号） | `POST /api/v1/auth/login` → `GET /api/v1/auth/me` | 登录返回的 `access_token` |
-| custom | 你自己写的方法 / 路径 / 请求头 / 请求体 | 你自己写 |
+| 显示 | 含义 |
+| --- | --- |
+| `$12.34 用量` + 绿点 | 查询正常 |
+| 同上 + **黄点** | 余额低于「低余额提醒阈值」（默认 5），只是提醒，不是错误 |
+| `未配置 用量` + 红点 | 还没填凭证（首次使用的正常状态） |
+| `查询失败 用量` + 红点 | 请求出错，点开面板看红条里的原因 |
 
-响应既支持标准包封 `{code, message, data}`（`code != 0` 会带着站点原文和修复建议报错），也支持裸对象。
+鼠标悬停小条会显示上次查询时间。
 
-**所有上游请求都由宿主（Node 侧）发出**：站点不需要开 CORS，凭证也不会出现在页面里。
+### 概览
 
-## 自定义查询接口
+按接口实际返回的内容渲染，**没有的字段不会硬凑**：管理员响应里没给你「冻结/已充值」就不显示那张卡；「剩余额度」和余额相同时也不重复显示。额度条、订阅日/周/月、按天用量柱状图、模型用量、限流窗口同理，有才画。
 
-「设置」里可以改的东西：
+### 明细
 
-- **服务地址**：任何 sub2api 部署，`http(s)://…`，结尾斜杠无所谓。
-- **路径**：用量路径 `/v1/usage`、当前用户 `/api/v1/auth/me`、管理员单用户 `/api/v1/admin/users/{id}`、管理员列表 `/api/v1/admin/users`。
-- **字段指针**：余额 / 剩余额度 / 已用 / 额度上限，JSON Pointer 写法（`/data/quota/remaining`、`data.balance`、`/data/items[0]/balance` 都认）。留空则自动识别常见位置。
-- **自定义请求**（模式选「自定义请求」时）：
-  - 路径占位符：`{start}` `{end}` `{timezone}` `{id}`（未填的占位符会原样保留，便于发现配置遗漏）
-  - 请求头写成 JSON 对象，例如 `{"x-api-key":"admin-…"}`、`{"Authorization":"Bearer sk-…"}`
-  - 请求体写 JSON，GET 可留空
-- **刷新与显示**：自动刷新间隔（0 = 只手动刷新）、统计区间天数、低余额提醒阈值（低于它时侧边栏图标出现小黄点）、货币符号、超时、时区。
-
-设置页长这样：
-
-![设置页](assets/settings.png)
-
-「明细」页会把识别到的字段、每个上游请求的状态码、以及**原始响应**都列出来，遇到没见过的返回格式可以直接照着填指针：
+三块内容：识别到的字段（扁平化的 `路径 = 值` 列表）、每个上游请求的 URL 与状态码、原始响应 JSON。**换了站点或接口返回格式变了，先来这里对字段**，再决定要不要填指针。
 
 ![明细页](assets/detail.png)
 
+### 设置
+
+![设置页](assets/settings.png)
+
+## 查询模式
+
+| 模式 | 上游请求 | 认证 |
+| --- | --- | --- |
+| `key`（站点 Key） | `GET /v1/usage?start_date=&end_date=&timezone=` | `Authorization: Bearer sk-…` |
+| `admin`（单个用户） | `GET /api/v1/admin/users/{id}` | `x-api-key: admin-…` 或管理员 `Bearer <JWT>` |
+| `admin`（用户列表） | `GET /api/v1/admin/users?search=&page=&page_size=&sort_by=&sort_order=` | 同上 |
+| `user`（账号） | `POST /api/v1/auth/login` → `GET /api/v1/auth/me` | 登录返回的 `access_token` |
+| `custom`（自定义） | 你自己写的方法 / 路径 / 请求头 / 请求体 | 你自己写 |
+
+响应既支持标准包封 `{code, message, data}`（`code != 0` 时把站点原文和修复建议一起报出来），也支持裸对象。
+
+**所有上游请求都由宿主（Node 侧）发出**：站点不需要开 CORS，凭证也不会出现在页面里。
+
+## 设置项参考
+
+界面上能改的全部设置项、对应的配置文件字段和默认值：
+
+### 查询接口
+
+| 设置项 | 配置键 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| 服务地址 | `baseUrl` | `https://aiapi.aaming.icu` | 任意 sub2api 部署；结尾斜杠会被去掉 |
+| 查询模式 | `mode` | `auto` | `auto` / `admin` / `key` / `user` / `custom` |
+| 凭证 | `credential` | 空 | 三态：留空=保持不变，填内容=替换，点「清除凭证」=清空 |
+| 邮箱 / 密码 | `email` `password` | 空 | 仅账号模式使用 |
+| 用户 ID | `adminUserId` | 空 | 管理员模式；留空或勾选下面的列表则查用户列表 |
+| 搜索关键词 | `search` | 空 | 管理员列表的过滤条件 |
+| 拉取用户列表 | `listUsers` | `false` | 勾上则查列表而不是单个用户 |
+
+### 自定义请求（模式选 `custom` 时）
+
+| 设置项 | 配置键 | 默认 |
+| --- | --- | --- |
+| 方法 | `custom.method` | `GET` |
+| 路径 | `custom.path` | `/v1/usage?start_date={start}&end_date={end}&timezone={timezone}` |
+| 请求头（JSON 对象） | `custom.headers` | 空 |
+| 请求体（JSON，GET 可留空） | `custom.body` | 空 |
+
+路径里可用的占位符：`{start}` `{end}` `{timezone}` `{id}`。**没填的占位符会原样保留**（便于一眼看出配置漏了）。
+
+### 字段映射与路径
+
+| 设置项 | 配置键 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| 余额 JSON 指针 | `pointers.balance` | 空 = 自动识别 | 见[下一节](#json-指针怎么写) |
+| 剩余额度指针 | `pointers.remaining` | 空 | 与余额不同时才单独显示一张卡 |
+| 已用指针 | `pointers.used` | 空 | 额度进度条的分子 |
+| 额度上限指针 | `pointers.limit` | 空 | 额度进度条的分母 |
+| 用量路径 | `paths.usage` | `/v1/usage` | |
+| 当前用户路径 | `paths.me` | `/api/v1/auth/me` | |
+| 管理员单用户路径 | `paths.adminUser` | `/api/v1/admin/users/{id}` | `{id}` 会被「用户 ID」替换 |
+| 管理员用户列表路径 | `paths.adminUsers` | `/api/v1/admin/users` | |
+
+还有几个只在配置文件里、界面上没放输入框的项（一般用不到）：
+
+`paths.login`（`/api/v1/auth/login`）、`paths.profile`（`/api/v1/user/profile`）、`pointers.frozen`、`pointers.recharged`（不填也会自动识别 `frozen_balance` / `total_recharged`）、`page`、`pageSize`、`sortBy`、`sortOrder`、`currency`。
+
+### 刷新与显示
+
+| 设置项 | 配置键 | 默认 | 范围 / 说明 |
+| --- | --- | --- | --- |
+| 自动刷新间隔（秒） | `intervalSec` | `120` | `0` = 只手动刷新；失败后也不会比这个间隔更快重试 |
+| 统计区间（天） | `rangeDays` | `30` | 1–365 |
+| 低余额提醒阈值 | `lowBalance` | `5` | 余额低于它时小条和图标出现黄点 |
+| 货币符号 | `currencySymbol` | `$` | 只影响显示 |
+| 超时（毫秒） | `timeoutMs` | `15000` | 1000–120000 |
+| 时区 | `timezone` | `Asia/Shanghai` | 作为 `{timezone}` 占位符和查询参数发给站点 |
+
+## JSON 指针怎么写
+
+指针用来从返回的 JSON 里取数，下面这些写法都认：
+
+| 写法 | 例子 |
+| --- | --- |
+| 带斜杠的 JSON Pointer | `/data/quota/remaining` |
+| 点号路径 | `data.balance` |
+| 数组下标（两种都行） | `/data/items[0]/balance`、`data.items.0.balance` |
+
+留空表示自动识别，内置会依次尝试这些常见位置：
+
+- **余额**：`/data/balance`、`/balance`、`/data/user/balance`、`/user/balance`、`/data/account/balance`、`/data/wallet/balance`、`/data/remaining`、`/remaining`、`/data/quota/remaining`、`/quota/remaining`
+- **冻结 / 已充值**：`/data/frozen_balance`、`/data/frozenBalance`、`/data/total_recharged`、`/data/totalRecharged`
+- **已用 / 上限**：`/data/quota/used`、`/data/subscription/used_usd`、`/data/quota/limit`、`/data/subscription/limit_usd`
+
+取不到值时不会崩，明细页会把识别到的字段全列出来，照着复制一个指针过去就行。
+
+## 宿主 HTTP 接口（脚本调用）
+
+面板用的接口也在本机 HTTP 上，可以直接 `curl` 用来做脚本或监控：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/sub2api-usage/api/state` | 掩码后的配置 + 上次快照 + 配置文件路径 |
+| `POST` | `/sub2api-usage/api/config` | 保存配置补丁（凭证三态同上） |
+| `POST` | `/sub2api-usage/api/query` | 用已保存的配置查询；可带 `{"days":7}` 或 `{"start":"2026-09-01","end":"2026-09-30"}` 临时改区间 |
+| `POST` | `/sub2api-usage/api/test` | 用候选配置试查，不保存：`{"config":{...}}` |
+
+```powershell
+# 查一次，只看余额
+curl.exe -s -X POST http://127.0.0.1:19387/sub2api-usage/api/query -H "content-type: application/json" -d "{}"
+```
+
+端口就是 DSH Web 的端口（看环境变量 `DSH_WEB_URL`，当前实例是 `http://127.0.0.1:19387`）。**只有本机来源能调用**，别的地址一律 403。
+
 ## 配置文件
 
-| 文件 | 内容 |
-| --- | --- |
-| `%DSH_HOME%\sub2api-usage.json` | 服务地址、模式、路径、指针、刷新间隔等（可安全分享） |
-| `%DSH_HOME%\sub2api-usage.secrets.json` | 仅凭证与密码，权限 0600 |
+| 文件 | 内容 | 权限 |
+| --- | --- | --- |
+| `%DSH_HOME%\sub2api-usage.json` | 服务地址、模式、路径、指针、刷新间隔等（**可以安全分享**） | 普通 |
+| `%DSH_HOME%\sub2api-usage.secrets.json` | 只有凭证和密码 | 0600 |
 
-`DSH_HOME` 默认是 `D:\dsh-home`（或 `~/.dsh`），也可用环境变量 `DSH_SUB2API_DIR` 指定目录。
-页面的「设置」页底部会显示这两个文件的实际路径。
+- `DSH_HOME` 默认是 `~/.dsh`（Windows 上常见 `D:\dsh-home`）。
+- 想放到别处就设环境变量 `DSH_SUB2API_DIR`，两个文件都跟着走。
+- 面板「设置」页底部会显示这两个文件的真实路径。
+- 两个文件都是原子写入（先写临时文件再改名），写坏了也不会留下半个 JSON。
 
 ## 安全边界
 
-- 上游接口只在**回环地址**上提供服务（`/sub2api-usage/api/*` 对非本机来源返回 403）：它持有凭证、且能被指向任意地址，不能暴露给局域网。
-- 凭证只存在宿主侧；浏览器拿到的是 `sk-t…7890` 这样的掩码提示。
-- 凭证以明文保存在 `sub2api-usage.secrets.json`（本机用户可读）。要更严格的隔离，请用系统凭据管理或限制该目录权限。
-- 「测试连接」会在保存前用候选配置真发一次请求。
+- **只服务回环地址**：`/sub2api-usage/api/*` 对非本机来源返回 403。这个接口持有凭证、而且能被指向任意地址，不能暴露到局域网。反过来说，任何本机进程本来就能读配置文件，所以这不是额外的信任边界。
+- **凭证不出宿主**：浏览器半区拿到的是 `sk-t…7890` 这样的掩码提示，原始凭证不会出现在页面、也不会进浏览器存储。
+- **凭证是明文**：存在 `sub2api-usage.secrets.json`（本机当前用户可读）。要更严格的隔离，请用系统凭据管理，或收紧该目录权限。
+- **「测试连接」会真发请求**：用的是你当前填在表单里的地址和凭证，但不写盘。
+- **服务地址可以是任意地址**：这是「可自定义」的代价。别把面板指向不可信的地址，否则下次刷新就会把你的凭证发给它。
+
+## 排错
+
+| 现象 | 原因 / 处理 |
+| --- | --- |
+| 小条显示「未配置」 | 还没填凭证：面板 → 设置 → 填一种，点「保存并查询」。 |
+| 小条显示「查询失败」 | 打开面板看红条：里面有错误码、站点返回的原文和修复建议。 |
+| 401 / 403 | 凭证类型和模式不匹配：`admin-…` 要用管理员模式，`sk-…` 用站点 Key；也可能是 Key 被停用。 |
+| 404 | 路径不对：在「管理员单用户路径」等地方改成你的部署实际路径。明细页的原始响应里能看到站点到底返回了什么。 |
+| 有数据但余额是空的 | 指针没命中：翻明细页的字段清单，把对应路径填进「余额 JSON 指针」。 |
+| 提示「宿主路由未加载」 | 宿主半区没挂上：确认插件是启用状态，重装一次（`dsh plugin --profile desktop add …`），必要时重启 DSH。 |
+| 提示「无法连接宿主接口」 | 页面连不上 DSH 自己的 Web 端口：确认 DSH 还在运行、端口没变（看 `DSH_WEB_URL`）。 |
+| 点了图标没反应 | 插件正在重挂载（改装/启停的瞬间）。等一秒再点，或用侧边栏列表里的那一行。 |
+| 数字一直不动 | 「自动刷新间隔」是 `0`：改成 `60` 之类，或点右上角「刷新」。 |
+| 图标一直有黄点 | 余额低于阈值，属于正常提醒；嫌烦就把「低余额提醒阈值」改成 0 或更小的数。 |
+| 请求超时 | 调大「超时（毫秒）」；站点慢或走了代理时常见。 |
+| 站点有 Cloudflare / 校验 UA | 把模式切到「自定义请求」，在请求头里补上需要的头。 |
+| 改了源码没生效 | pnpm 装的是硬链接副本：跑 `node scripts/deploy.mjs`，再按 F5。 |
 
 ## 开发
 
 ```powershell
-cd <克隆下来的 dsh-sub2api-usage 目录>
-node --test "test/*.test.mjs"      # 64 项：纯逻辑 18 + 上游端到端 14 + 宿主路由 11 + 配置存储 10 + 客户端 11
-node scripts/deploy.mjs            # 把改动同步到已安装它的 profile
+cd dsh-sub2api-usage
+node --test "test/*.test.mjs"   # 70 项：纯逻辑 18 + 上游端到端 13 + 宿主路由 11 + 配置存储 10 + 客户端 12 + 文档校验 6
+node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（自动找 DSH_HOME）
 ```
 
-`test/mock-sub2api.mjs` 是一个本地假站点（admin / key / user / custom / 超时 / 非 JSON 全覆盖），
-既能被测试直接引用，也能单独跑起来供手工验证：
+`test/readme.test.mjs` 会检查这份文档本身：截图路径存在、目录锚点指向真实标题、写出来的默认值和 `lib/core.js` 的 `DEFAULT_CONFIG` 一致、脚本接口和 `lib/index.js` 注册的路由对得上。
+
+`test/mock-sub2api.mjs` 是一个本地假站点，覆盖 admin / key / user / custom / 超时 / 非 JSON 各种返回，既能被测试直接引用，也能单独跑起来手工验证：
 
 ```powershell
 node test/mock-sub2api.mjs 8799
-# 再把插件指向 http://127.0.0.1:8799，凭证填 sk-testkey1234567890
+# 再把面板指向 http://127.0.0.1:8799，凭证填 sk-testkey1234567890
 ```
 
-结构：
+### 目录结构
 
 ```
 dsh-sub2api-usage/
@@ -130,29 +290,34 @@ dsh-sub2api-usage/
 └── test/                 # node:test 测试 + mock 站点
 ```
 
-`lib/client.js` 是手写的 `window.__ModuleLoader__.load({ id, factory })` 浏览器模块（无构建步骤、无 JSX），
-只 `require("react")` 这一个平台模块。
+`lib/client.js` 是手写的 `window.__ModuleLoader__.load({ id, factory })` 浏览器模块（无构建步骤、无 JSX），只 `require("react")` 这一个平台模块。
 
-## 卸载
+## 更新与卸载
 
 ```powershell
+# 更新（git 方式装的：重新 add 一次）
+dsh plugin --profile desktop add github:aming1029/dsh-sub2api-usage
+
+# 卸载
 dsh plugin --profile desktop remove dsh-sub2api-usage
 ```
 
-或在上面的「插件」页里关掉它（会同时撤掉侧边栏小条、面板图标与主面板，路由也会下线）。
-配置文件不会自动删除，需要的话手动删掉那两个 json。
+更新后如果版本没变（包管理器命中缓存），先 `remove` 再 `add`。
+也可以直接在 DSH 的「插件」页里关掉它——侧边栏小条、面板图标、主面板和路由会一起撤下，再打开就回来。
+卸载**不会**删除配置文件，需要的话手动删掉那两个 json。
 
-## 排错
+## 适配别的站点
 
-| 现象 | 处理 |
-| --- | --- |
-| 侧边栏显示「未配置」 | 还没填凭证，点开面板 → 设置 → 填一种凭证。 |
-| 显示「查询失败」+ 面板里有红条 | 红条里有错误码、站点原文和修复建议；401/403 基本是凭证类型不对。 |
-| 面板提示「宿主路由未加载」 | 插件被停用了，或者安装后没生效：`dsh plugin --profile desktop add file:…` 再试。 |
-| 改了源码没反应 | 跑 `node scripts/deploy.mjs`（pnpm 装的是硬链接副本），必要时按 F5。 |
-| 余额一直在但数字不动 | 「自动刷新间隔」是 0；改成 60 之类，或点「刷新」。 |
+不改代码就能适配大多数情况：
+
+1. **换个部署**：只改「服务地址」。
+2. **接口路径不一样**：改「字段映射与路径」里的四项路径；`{id}` 是用户 ID 的占位符。
+3. **返回结构不一样**：翻明细页的原始响应，找到余额在哪，填进「余额 JSON 指针」；包封不是 `{code,message,data}` 也没关系，裸对象一样解析。
+4. **完全是别的接口**：模式切「自定义请求」，自己写方法 / 路径 / 请求头 / 请求体。
+5. **还是不行**：开 issue 把（脱敏后的）响应结构贴上来，适配器是按结构加的。
 
 ## 反馈
 
-问题、需求、想加新的响应格式适配，都欢迎开 issue：
-<https://github.com/aming1029/dsh-sub2api-usage/issues>
+问题、需求、新的响应格式适配：<https://github.com/aming1029/dsh-sub2api-usage/issues>
+
+许可证 [MIT](LICENSE)。
