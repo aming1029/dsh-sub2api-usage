@@ -11,7 +11,7 @@ import { test } from 'node:test';
 
 import { normalizeConfig } from '../lib/core.js';
 import { hourKeyFromLabel, windowFromTrend, fetchSiteHours } from '../lib/site-hours.js';
-import { EMAIL, PASSWORD, SITE_KEY, USER_TOKEN, startMockSub2Api } from './mock-sub2api.mjs';
+import { EMAIL, PASSWORD, SITE_KEY, USER_TOKEN, richHourTrend, startMockSub2Api } from './mock-sub2api.mjs';
 
 const TZ = 'Asia/Shanghai';
 const AT = new Date('2026-10-02T11:30:00+08:00');
@@ -148,6 +148,25 @@ test('failures fall back instead of inventing hours', async () => {
   } finally {
     await mock.close();
   }
+});
+
+test('the screenshot fixture is a sane day of hours', () => {
+  // MOCK_RICH_HOURS=1 feeds the README screenshots; a broken fixture would ship a
+  // broken-looking chart, so it is pinned here like any other test data.
+  const at = new Date(2026, 9, 2, 21, 30); // local time, the way the mock reads it
+  const rows = richHourTrend(at);
+  assert.equal(rows.length, 13);
+  assert.equal(rows[rows.length - 1].date, '2026-10-02 21:00', '最新一行是当前小时');
+  assert.equal(rows[0].date, '2026-10-02 09:00');
+  for (const row of rows) {
+    assert.match(row.date, /^\d{4}-\d{2}-\d{2} \d{2}:00$/);
+    assert.ok(row.cost > 0 && row.cost < 1, `花费要像真数据：${row.cost}`);
+    assert.ok(row.requests > 0 && row.total_tokens > 0);
+    assert.ok(row.actual_cost > row.cost, '实际扣费高于标准花费，和后端一致');
+  }
+  const window = windowFromTrend(rows, { timezone: TZ, now: at, hours: 24 });
+  assert.equal(window.sampledHours, 13, '13 行都落在 24 小时窗口内');
+  assert.equal(window.unparsed, 0);
 });
 
 test('a response without a trend array is reported as a shape problem', async () => {

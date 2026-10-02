@@ -10,7 +10,7 @@
 
 ![侧边栏小条与用量面板](assets/overview.png)
 
-[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 121 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 123 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
 
 ## 目录
 
@@ -106,7 +106,9 @@ dsh plugin --profile desktop add file:D:/path/to/dsh-sub2api-usage
 
 ### 用量趋势（折线图）
 
-![用量趋势折线图](assets/trend.png)
+![按小时趋势、统计行、导出按钮与逐小时明细表](assets/trend.png)
+
+图里是**按小时**视图：折线上有断口的地方就是没采样的小时（不是 0），下面那串按钮是导出，再下面是展开的逐小时明细表。按天视图同一套操作，只是横轴换成日期。
 
 - **按天 / 按小时**：左上角切换粒度，选择会存进「趋势默认粒度」，下次打开还是这个视图。
 - **按天折线**：纵轴刻度取整到 1 / 2 / 2.5 / 5 这类好读的整数，横轴按面板宽度自动抽稀日期标签，永远不会挤成一团。
@@ -150,6 +152,10 @@ GET  /api/v1/usage/dashboard/trend?start_date=&end_date=&granularity=hour&timezo
 
 接口路径和字段名是从站点自己的前端 bundle 里读出来的（它的 `usage` API 模块和 dashboard 图表），不是猜的；`granularity` 在那个下拉框里确实只有 `day` / `hour` 两个值。认证方式三选一：**账号模式填邮箱密码**（宿主登录后拿 `access_token`）、**把浏览器里的 `auth_token` 填进凭证框**、或者管理员令牌（如果站点允许）。
 
+开关就在设置页的「刷新与显示」里（和「小时区间」同一排）：
+
+![设置页里的「小时数据来源」](assets/hourly-source.png)
+
 好处是**历史小时不用等采样**、来源是站点账本；代价和边界：
 
 | 情况 | 表现 |
@@ -169,6 +175,8 @@ GET  /api/v1/usage/dashboard/trend?start_date=&end_date=&granularity=hour&timezo
 ### 设置
 
 ![设置页](assets/settings.png)
+
+设置分四组：**查询接口**（服务地址、查询模式、凭证）、**字段映射与路径**、**刷新与显示**、自定义请求。改完点「保存并查询」，会先写配置再立刻查一次；「测试连接（不保存）」只试不写。后面几节逐项说明；「刷新与显示」里的「小时数据来源」下拉框长什么样，见上面[换成站点自己的小时接口](#换成站点自己的小时接口可选)那一节。
 
 ## 查询模式
 
@@ -326,7 +334,7 @@ curl.exe -s -X POST http://127.0.0.1:19387/sub2api-usage/api/query -H "content-t
 
 ```powershell
 cd dsh-sub2api-usage
-npm test                        # 121 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 11 + 小时采样 12 + 站点小时 8 + 客户端与图表 33 + 文档校验 7
+npm test                        # 123 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 11 + 小时采样 12 + 站点小时 9 + 客户端与图表 34 + 文档校验 7
 node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（自动找 DSH_HOME）
 ```
 

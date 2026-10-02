@@ -16,6 +16,33 @@ export const USER_TOKEN = 'tok-user-123';
 export const EMAIL = 'alice@example.com';
 export const PASSWORD = 'secret-password';
 export const ANY_KEY = process.env.MOCK_ANY_KEY === '1';
+/** Screenshot fixture: a day of hourly rows instead of the two-row default. */
+export const RICH_HOURS = process.env.MOCK_RICH_HOURS === '1';
+
+/** Deliberately fixed values: the same clock gives the same chart. */
+const RICH_COSTS = [0.06, 0.09, 0.21, 0.35, 0.52, 0.61, 0.48, 0.33, 0.27, 0.19, 0.42, 0.24, 0.08];
+
+/**
+ * `count` hourly rows ending at the hour containing `now`, labelled as wall-clock
+ * in the machine's zone -- which is the zone the plugin asks the site for.
+ */
+export function richHourTrend(now = new Date(), count = RICH_COSTS.length) {
+  const rows = [];
+  for (let back = count - 1; back >= 0; back -= 1) {
+    const when = new Date(now.getTime() - back * 3600 * 1000);
+    const hour = when.getHours();
+    const day = [when.getFullYear(), String(when.getMonth() + 1).padStart(2, '0'), String(when.getDate()).padStart(2, '0')].join('-');
+    const cost = RICH_COSTS[(RICH_COSTS.length + hour - (count - 1)) % RICH_COSTS.length];
+    rows.push({
+      date: `${day} ${String(hour).padStart(2, '0')}:00`,
+      requests: Math.round(cost * 420),
+      total_tokens: Math.round(cost * 41000000),
+      cost,
+      actual_cost: Math.round(cost * 1.7 * 1e6) / 1e6,
+    });
+  }
+  return rows;
+}
 
 const USERS = {
   123: { id: 123, email: 'alice@example.com', username: 'alice', balance: 42.5, frozen_balance: 1.25, total_recharged: 300, status: 'active' },
@@ -117,6 +144,13 @@ export function createMockSub2Api() {
           { date: '2026-09-30', requests: 1000, total_tokens: 25000, cost: 1, actual_cost: 0.9 },
           { date: '2026-10-01', requests: 4200, total_tokens: 55996144, cost: 2, actual_cost: 1.5 },
         ] }));
+        return;
+      }
+      if (RICH_HOURS) {
+        // MOCK_RICH_HOURS=1: a day of hours, so a screenshot has a chart with a
+        // shape instead of two points. Off by default -- the tests pin the small,
+        // hand-checkable series below.
+        send(res, 200, envelope({ trend: richHourTrend() }));
         return;
       }
       // Two rows for one hour on purpose: the endpoint may be per-model, and the

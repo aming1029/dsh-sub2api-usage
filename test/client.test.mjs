@@ -733,6 +733,20 @@ test('the selection is announced, not only coloured', () => {
   }
 });
 
+test('the header names the mode in Chinese instead of echoing the host id', () => {
+  const { registrations, harness } = setUpPlugin();
+  for (const [mode, label] of [['user', '账号'], ['key', '站点 Key'], ['admin', '管理员'], ['custom', '自定义接口'], ['auto', '自动识别']]) {
+    const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, {
+      snapshot: { ...SNAPSHOT, mode },
+    });
+    assert.match(textOf(tree), new RegExp(label + ' 模式'), `${mode} 要显示成「${label}」`);
+    assert.equal(new RegExp('\\b' + mode + ' 模式').test(textOf(tree)), false, `不该出现「${mode} 模式」`);
+  }
+  // An unknown id must not make the header empty.
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, { snapshot: { ...SNAPSHOT, mode: 'future' } });
+  assert.match(textOf(tree), /future 模式/);
+});
+
 test('the hourly view says where the hours came from, and why the site failed', () => {
   const { registrations, harness } = setUpPlugin();
 
