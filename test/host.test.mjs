@@ -199,3 +199,79 @@ test('a malformed body or an unknown path answers with a typed error', async () 
   assert.equal(missing.status, 404);
   assert.equal(missing.body.error.code, 'notfound');
 });
+
+// ------------------------------------------------------------- hourly window
+//
+// The site's key endpoint only returns day buckets, so the host builds hours
+// from the running totals in each response. These tests cover the wiring: when
+// a sample is taken, what the window looks like, and what must not be sampled.
+
+test('the state endpoint always ships a full hourly window', async () => {
+  await request('POST', '/sub2api-usage/api/config', { hourlyHours: 24, intervalSec: 0 });
+  const response = await request('GET', '/sub2api-usage/api/state');
+  const { hourly } = response.body;
+  assert.equal(hourly.hours, 24);
+  assert.equal(hourly.buckets.length, 24, '每个小时都占一个位置');
+  assert.equal(hourly.retainedHours, 336);
+  assert.match(hourly.to, /^\d{4}-\d{2}-\d{2}T\d{2}:00$/);
+  assert.deepEqual(
+    hourly.buckets.map((bucket) => bucket.hour),
+    [...hourly.buckets.map((bucket) => bucket.hour)].sort(),
+    '窗口按时间升序',
+  );
+  assert.ok(hourly.buckets.every((bucket) => bucket.missing === true || typeof bucket.cost === 'number'));
+});
+
+test('a successful query samples the current hour exactly once', async () => {
+  // Key mode is what reports today's running totals; account mode (the test
+  // above) has no counters at all, which the next case pins down.
+  await request('POST', '/sub2api-usage/api/config', { mode: 'key', credential: SITE_KEY, intervalSec: 0 });
+  const before = await request('GET', '/sub2api-usage/api/state');
+  const first = await request('POST', '/sub2api-usage/api/query', {});
+  assert.equal(first.body.hourly.samples, before.body.hourly.samples + 1);
+
+  const second = await request('POST', '/sub2api-usage/api/query', {});
+  assert.equal(second.body.hourly.samples, first.body.hourly.samples + 1);
+
+  const current = second.body.hourly.buckets[second.body.hourly.buckets.length - 1];
+  assert.equal(current.hour, second.body.hourly.to);
+  assert.equal(current.missing, undefined, '刚采样过的小时不能是缺口');
+  assert.equal(typeof current.cost, 'number');
+  assert.equal(typeof current.requests, 'number', 'mock 的 usage.today 里有请求数');
+  assert.equal(current.spanMin > 0, true);
+
+  const saved = JSON.parse(await readFile(join(dataDir, 'sub2api-usage.hourly.json'), 'utf8'));
+  assert.equal(saved.version, 1);
+  assert.equal(saved.samples, second.body.hourly.samples, '采样计数落盘，重启后接着累计');
+});
+
+test('a response without running totals is not sampled into a fake zero', async () => {
+  await request('POST', '/sub2api-usage/api/config', { mode: 'user', email: EMAIL, password: PASSWORD, credential: '' });
+  const before = await request('GET', '/sub2api-usage/api/state');
+  const query = await request('POST', '/sub2api-usage/api/query', {});
+  assert.equal(query.body.ok, true, '账号模式照样能查余额');
+  assert.equal(query.body.hourly.samples, before.body.hourly.samples, '没有 usage.today 就不要记一笔');
+  await request('POST', '/sub2api-usage/api/config', { mode: 'key', credential: SITE_KEY });
+});
+
+test('probing a candidate config does not pollute the samples', async () => {
+  const before = await request('GET', '/sub2api-usage/api/state');
+  const probe = await request('POST', '/sub2api-usage/api/test', { config: { mode: 'key', credential: SITE_KEY } });
+  assert.equal(probe.body.ok, true);
+  const after = await request('GET', '/sub2api-usage/api/state');
+  assert.equal(after.body.hourly.samples, before.body.hourly.samples);
+});
+
+test('the hourly window follows hourlyHours, clamped to what is retained', async () => {
+  const narrow = await request('POST', '/sub2api-usage/api/config', { hourlyHours: 6 });
+  assert.equal(narrow.body.config.hourlyHours, 6);
+  const six = await request('GET', '/sub2api-usage/api/state');
+  assert.equal(six.body.hourly.hours, 6);
+
+  const silly = await request('POST', '/sub2api-usage/api/config', { hourlyHours: 9999 });
+  assert.equal(silly.body.config.hourlyHours, 336, '超过保留上限就夹到上限');
+  const wide = await request('GET', '/sub2api-usage/api/state');
+  assert.equal(wide.body.hourly.hours, 336);
+
+  await request('POST', '/sub2api-usage/api/config', { hourlyHours: 24 });
+});

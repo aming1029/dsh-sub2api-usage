@@ -134,7 +134,7 @@ function setUpPlugin() {
 
 function fakeStore(state) {
   const listeners = new Set();
-  const calls = { query: 0, save: 0, test: 0, clearToast: 0 };
+  const calls = { query: 0, save: 0, test: 0, load: 0, clearToast: 0 };
   return {
     calls,
     get: () => state,
@@ -142,6 +142,7 @@ function fakeStore(state) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    load() { calls.load += 1; return Promise.resolve({ ok: true }); },
     query() { calls.query += 1; return Promise.resolve({ ok: true }); },
     save(patch) { calls.save += 1; calls.lastPatch = patch; return Promise.resolve({ ok: true, config: CONFIG, changed: ['baseUrl'] }); },
     test(candidate) { calls.test += 1; calls.lastCandidate = candidate; return Promise.resolve({ ok: true, snapshot: SNAPSHOT }); },
@@ -359,17 +360,19 @@ const THREE_DAYS = [
 ];
 
 /** Render the main panel on the overview tab with a given daily series. */
-function renderOverview(harness, registrations, daily, store) {
+function renderOverview(harness, registrations, daily, store, extra) {
   const main = registrations.slots.find((slot) => slot.options.name === 'main');
   const state = {
     config: { ...CONFIG, rangeDays: 30 },
     snapshot: { ...SNAPSHOT, daily },
+    hourly: null,
     error: null,
     phase: 'ready',
     busy: false,
     toast: null,
     queriedAt: SNAPSHOT.at,
     files: null,
+    ...(extra ?? {}),
   };
   const props = { ...main.options.inject(), store: store ?? fakeStore(state) };
   return { tree: harness.mount(harness.React.createElement(main.component, props)), props };
@@ -382,6 +385,9 @@ test('the trend chart plots the series against a nice axis', () => {
   const { tree } = renderOverview(harness, registrations, THREE_DAYS);
 
   // plot box: left 46, right 640-14, top 12, bottom 176-22
+  const svg = findNode(tree, byClass('s2u-chart-svg'));
+  assert.equal(svg.props['data-granularity'], 'day');
+  assert.equal(svg.props['aria-label'], '花费按天趋势，3 天', '按天说天数，不说“数据点”');
   const line = findNode(tree, byClass('s2u-chart-line'));
   assert.equal(line.props.d, 'M46 154 L336 83 L626 12');
   const area = findNode(tree, byClass('s2u-chart-area'));
@@ -494,3 +500,172 @@ test('range shortcuts re-save rangeDays and refresh', async () => {
   assert.deepEqual(store.calls.lastPatch, { rangeDays: 7 });
   assert.equal(store.calls.query, 1, '改完区间立刻重查');
 });
+
+// ------------------------------------------------------------- hourly chart
+//
+// Hour buckets come from the host's local sampling, including the holes: an
+// hour nobody sampled keeps its slot but breaks the line, and never becomes 0.
+
+const FOUR_HOURS = {
+  hours: 4,
+  from: '2026-09-30T22:00',
+  to: '2026-10-01T01:00',
+  retainedHours: 336,
+  samples: 7,
+  since: '2026-09-30T22:00',
+  buckets: [
+    { hour: '2026-09-30T22:00', cost: 0.5, requests: 10, tokens: 1000, actual: 0.6, spanMin: 2, partial: false },
+    { hour: '2026-09-30T23:00', cost: 1, requests: 20, tokens: 2000, spanMin: 2, partial: false },
+    { hour: '2026-10-01T00:00', missing: true },
+    { hour: '2026-10-01T01:00', cost: 1.5, requests: 30, tokens: 3000, spanMin: 2, partial: false },
+  ],
+};
+
+const hourlyState = (overrides) => ({
+  config: { ...CONFIG, granularity: 'hour', hourlyHours: 4 },
+  hourly: FOUR_HOURS,
+  ...overrides,
+});
+
+test('the hourly view plots the sampled hours and breaks the line at a gap', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState());
+
+  const svg = findNode(tree, byClass('s2u-chart-svg'));
+  assert.equal(svg.props['data-granularity'], 'hour');
+  assert.equal(svg.props['data-points'], '4', '没采样的小时也占一个位置');
+  assert.equal(svg.props['aria-label'], '花费按小时趋势，3 / 4 小时（1 小时无采样）');
+
+  // Slots are evenly spaced across x 46…626 and the line stops at the gap: the
+  // peak of 1.5 gives a 0…1.5 axis with a 0.375 step, so 0.5 → 106.67 and
+  // 1.0 → 59.33, while the lone 01:00 point sits at the top with no neighbour.
+  assert.equal(findNode(tree, byClass('s2u-chart-line')).props.d, 'M46 106.67 L239.33 59.33');
+  assert.equal(findNode(tree, byClass('s2u-chart-area')).props.d, 'M46 106.67 L239.33 59.33 L239.33 154 L46 154 Z');
+  const dots = findAll(tree, byClass('s2u-chart-dot'));
+  assert.equal(dots.length, 1, '孤立的小时画成点，而不是画一条假线');
+  assert.equal(dots[0].props.cx, 626);
+  assert.equal(dots[0].props.cy, 12);
+
+  const labels = findAll(tree, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.deepEqual(labels, ['$1.500', '$1.125', '$0.750', '$0.375', '$0.000', '22:00', '23:00', '00:00', '01:00']);
+  assert.match(textOf(tree), /3 \/ 4 小时（1 小时无采样）/);
+  assert.match(textOf(tree), /按小时 · \$3\.00 \/ 3 小时（本机采样）/);
+
+  const stats = textOf(findNode(tree, byClass('s2u-chart-stats')));
+  assert.match(stats, /合计\s+\$3\.00/);
+  assert.match(stats, /时均\s+\$1\.00/);
+  assert.match(stats, /峰值\s+\$1\.50（01:00）/);
+  assert.match(stats, /区间\s+22:00 → 01:00/);
+  assert.match(textOf(tree), /小时数据由插件本机采样累计/);
+});
+
+test('a long hourly window labels whole dates, not just clock times', () => {
+  const { registrations, harness } = setUpPlugin();
+  const buckets = Array.from({ length: 40 }, (_, index) => ({
+    hour: `2026-10-0${index < 24 ? 1 : 2}T${String(index % 24).padStart(2, '0')}:00`,
+    cost: index / 10,
+  }));
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    config: { ...CONFIG, granularity: 'hour', hourlyHours: 40 },
+    hourly: { ...FOUR_HOURS, hours: 40, buckets },
+  }));
+  const labels = findAll(tree, (node) => node.type === 'text' && node.props.className === 's2u-chart-tick').map((node) => node.props.children);
+  assert.equal(labels[5], '10-01 00:00', '长窗口带上日期');
+  assert.equal(labels[labels.length - 1], '10-02 15:00');
+});
+
+test('switching to hours re-saves the granularity and offers hourly windows', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const store = fakeStore({ config: { ...CONFIG, rangeDays: 30 }, snapshot: { ...SNAPSHOT, daily: THREE_DAYS }, hourly: FOUR_HOURS, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store);
+
+  const grains = findAll(tree, (node) => node.type === 'button' && ['按天', '按小时'].includes(node.props.children));
+  assert.deepEqual(grains.map((node) => node.props.children), ['按天', '按小时']);
+  assert.equal(grains[0].props['data-active'], 'true');
+  grains[1].props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(store.calls.lastPatch, { granularity: 'hour' });
+});
+
+test('hourly range buttons save hourlyHours without an upstream query', async () => {
+  const { registrations, harness } = setUpPlugin();
+  const store = fakeStore({
+    config: { ...CONFIG, granularity: 'hour', hourlyHours: 4 },
+    snapshot: { ...SNAPSHOT, daily: THREE_DAYS },
+    hourly: FOUR_HOURS,
+    error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null,
+  });
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, store, hourlyState());
+
+  const ranges = findAll(tree, (node) => node.type === 'button' && /^(24 小时|\d+ 天)$/.test(node.props.children));
+  assert.deepEqual(ranges.map((node) => node.props.children), ['24 小时', '3 天', '7 天', '14 天']);
+  assert.equal(ranges[2].props['data-active'], 'false');
+  ranges[1].props.onClick();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(store.calls.lastPatch, { hourlyHours: 72 });
+  assert.equal(store.calls.load, 1, '只重新读一次宿主状态，不再打上游接口');
+  assert.equal(store.calls.query, 0);
+});
+
+test('hovering an hour shows the sample it came from, and a gap says so', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState());
+  const remount = () => harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+
+  const bands = findAll(tree, byClass('s2u-chart-hit'));
+  assert.deepEqual(bands.map((node) => node.props['data-missing']), ['false', 'false', 'true', 'false']);
+
+  bands[3].props.onMouseEnter();
+  const tip = findNode(remount(), byClass('s2u-chart-tip'));
+  assert.equal(tip.props['data-tip'], '2026-10-01T01:00');
+  assert.match(textOf(tip), /2026-10-01 01:00/, '读数框用可读的日期时间');
+  assert.match(textOf(tip), /花费 \$1\.50/);
+  assert.match(textOf(tip), /请求 30 次/);
+  assert.match(textOf(tip), /采样 2 分钟/);
+
+  findNode(remount(), byClass('s2u-chart-hit')).props.onMouseEnter();
+  const gapTip = findNode(remount(), byClass('s2u-chart-tip'));
+  assert.equal(gapTip.props['data-missing'], 'false');
+  findAll(remount(), byClass('s2u-chart-hit'))[2].props.onMouseEnter();
+  const missingTip = findNode(remount(), byClass('s2u-chart-tip'));
+  assert.equal(missingTip.props['data-missing'], 'true');
+  assert.match(textOf(missingTip), /这个小时没有数据/);
+  assert.equal(findNode(remount(), byClass('s2u-chart-cross')), undefined, '缺口没有十字线');
+});
+
+test('the granularity switch still moves when the host predates the field', () => {
+  // Before DSH is restarted the host answers /config without granularity, so the
+  // saved value never comes back. The click must still switch the view and say
+  // what is missing, instead of silently bouncing back to 按天.
+  const { registrations, harness } = setUpPlugin();
+  const store = fakeStore({ config: { ...CONFIG }, snapshot: { ...SNAPSHOT, daily: THREE_DAYS }, hourly: null, error: null, phase: 'ready', busy: false, toast: null, queriedAt: null, files: null });
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS, store);
+  const remount = () => harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+
+  findAll(tree, (node) => node.type === 'button' && node.props.children === '按小时')[0].props.onClick();
+  const hourly = remount();
+  assert.deepEqual(store.calls.lastPatch, { granularity: 'hour' }, '照样写回配置');
+  assert.equal(findAll(hourly, (node) => node.type === 'button' && node.props.children === '按小时')[0].props['data-active'], 'true');
+  assert.match(textOf(hourly), /宿主没有返回小时窗口：确认插件已更新并重启 DSH。/);
+
+  findAll(hourly, (node) => node.type === 'button' && node.props.children === '按天')[0].props.onClick();
+  const back = remount();
+  assert.equal(findNode(back, byClass('s2u-chart-line')).props.d, 'M46 154 L336 83 L626 12', '切回按天还是原来的折线');
+  assert.deepEqual(store.calls.lastPatch, { granularity: 'day' });
+});
+
+test('an empty hour window explains why instead of looking broken', () => {
+  const { registrations, harness } = setUpPlugin();
+  const fresh = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    hourly: { ...FOUR_HOURS, samples: 0, buckets: [] },
+  })).tree;
+  assert.match(textOf(fresh), /还没有小时数据/);
+  const switches = findAll(fresh, (node) => node.type === 'button' && ['按天', '按小时'].includes(node.props.children));
+  assert.equal(switches.length, 2, '空状态也要留着切换按钮，否则回不去按天');
+
+  const offWindow = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    hourly: { ...FOUR_HOURS, buckets: FOUR_HOURS.buckets.map((bucket) => ({ hour: bucket.hour, missing: true })) },
+  })).tree;
+  assert.match(textOf(offWindow), /这个窗口内没有采样到小时数据/);
+});
+

@@ -4,6 +4,8 @@ import { test } from 'node:test';
 
 import {
   DEFAULT_CONFIG,
+  MAX_HOURLY_HOURS,
+  MIN_HOURLY_HOURS,
   QueryError,
   buildPlan,
   detectMode,
@@ -37,6 +39,21 @@ test('normalizeConfig fills defaults and clamps hostile input', () => {
   assert.equal(cfg.mode, DEFAULT_CONFIG.mode);
   assert.equal(cfg.paths.usage, '/v1/usage');
   assert.equal(cfg.baseUrl, DEFAULT_CONFIG.baseUrl);
+});
+
+test('the trend granularity and hourly window are validated, not trusted', () => {
+  assert.equal(DEFAULT_CONFIG.granularity, 'day');
+  assert.equal(DEFAULT_CONFIG.hourlyHours, 24);
+  assert.deepEqual(
+    [normalizeConfig({}).granularity, normalizeConfig({ granularity: 'hour' }).granularity],
+    ['day', 'hour'],
+  );
+  assert.equal(normalizeConfig({ granularity: 'HOUR' }).granularity, 'hour');
+  assert.equal(normalizeConfig({ granularity: 'minute' }).granularity, 'day', '不认识的粒度回到按天');
+  assert.equal(normalizeConfig({ hourlyHours: 1 }).hourlyHours, MIN_HOURLY_HOURS);
+  assert.equal(normalizeConfig({ hourlyHours: 9999 }).hourlyHours, MAX_HOURLY_HOURS);
+  assert.equal(normalizeConfig({ hourlyHours: '12' }).hourlyHours, 12);
+  assert.equal(normalizeConfig({ hourlyHours: 'nope' }).hourlyHours, DEFAULT_CONFIG.hourlyHours);
 });
 
 test('maskSecret never leaks the middle of a credential', () => {
@@ -216,6 +233,48 @@ test('summarize extracts the documented /v1/usage shape', () => {
   assert.equal(snapshot.daily[0].actual, 0.4);
   assert.equal(snapshot.fields.length > 0, true);
   assert.equal(snapshot.warnings.length, 0);
+});
+
+test("summarize keeps today's running totals for the hourly sampler", () => {
+  const snapshot = summarize({
+    config: normalizeConfig({ mode: 'key', credential: 'sk-abcdefghijklmnop' }),
+    plan: { mode: 'key' },
+    steps: [
+      {
+        id: 'usage',
+        label: 'Key 用量',
+        url: 'https://x/v1/usage',
+        status: 200,
+        json: {
+          code: 0,
+          data: {
+            balance: 11.8,
+            usage: {
+              rpm: 1,
+              tpm: 150940,
+              today: {
+                cost: 0.939719148,
+                actual_cost: 1.6914944664,
+                requests: 302,
+                total_tokens: 32863129,
+              },
+            },
+          },
+        },
+      },
+    ],
+    at: NOW,
+  });
+  assert.deepEqual(snapshot.today, { cost: 0.939719148, actual: 1.6914944664, requests: 302, tokens: 32863129 });
+
+  // A payload without usage.today simply has no sampling input.
+  const bare = summarize({
+    config: normalizeConfig({ mode: 'key', credential: 'sk-abcdefghijklmnop' }),
+    plan: { mode: 'key' },
+    steps: [{ id: 'usage', label: 'Key 用量', url: 'https://x/v1/usage', status: 200, json: { code: 0, data: { balance: 1 } } }],
+    at: NOW,
+  });
+  assert.equal(bare.today, undefined);
 });
 
 test('daily usage given as an object of days keeps requests and tokens', () => {

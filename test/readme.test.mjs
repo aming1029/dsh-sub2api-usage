@@ -71,6 +71,8 @@ test('every documented default matches the shipped config', async () => {
     ['`mode`', DEFAULT_CONFIG.mode],
     ['`intervalSec`', String(DEFAULT_CONFIG.intervalSec)],
     ['`rangeDays`', String(DEFAULT_CONFIG.rangeDays)],
+    ['`granularity`', DEFAULT_CONFIG.granularity],
+    ['`hourlyHours`', String(DEFAULT_CONFIG.hourlyHours)],
     ['`lowBalance`', String(DEFAULT_CONFIG.lowBalance)],
     ['`timeoutMs`', String(DEFAULT_CONFIG.timeoutMs)],
     ['`timezone`', DEFAULT_CONFIG.timezone],

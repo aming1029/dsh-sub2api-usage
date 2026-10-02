@@ -11,6 +11,9 @@ export function createHarness() {
   let cursor = 0;
   let dirty = false;
   let effects = [];
+  // React keeps hook slots per component instance, not per render pass, so a new
+  // hook added to one component must not shift another component's slots.
+  const slots = new Map();
 
   const React = {
     createElement(type, props, ...children) {
@@ -18,12 +21,15 @@ export function createHarness() {
       return { type, props: { ...(props ?? {}), children: flat } };
     },
     useState(initial) {
+      // Capture this component's slot array: the setter may run long after the
+      // render finished, when `hooks` points at someone else's slots.
+      const slot = hooks;
       const index = cursor++;
-      if (!(index in hooks)) hooks[index] = typeof initial === 'function' ? initial() : initial;
+      if (!(index in slot)) slot[index] = typeof initial === 'function' ? initial() : initial;
       return [
-        hooks[index],
+        slot[index],
         (next) => {
-          hooks[index] = typeof next === 'function' ? next(hooks[index]) : next;
+          slot[index] = typeof next === 'function' ? next(slot[index]) : next;
           dirty = true;
         },
       ];
@@ -62,7 +68,19 @@ export function createHarness() {
     if (typeof node === 'string' || typeof node === 'number') return String(node);
     if (Array.isArray(node)) return node.map(renderNode);
     const { type, props } = node;
-    if (typeof type === 'function') return renderNode(type(props ?? {}));
+    if (typeof type === 'function') {
+      if (!slots.has(type)) slots.set(type, []);
+      const outer = hooks;
+      const outerCursor = cursor;
+      hooks = slots.get(type);
+      cursor = 0;
+      try {
+        return renderNode(type(props ?? {}));
+      } finally {
+        hooks = outer;
+        cursor = outerCursor;
+      }
+    }
     return { type, props: { ...props, children: renderNode(props?.children) } };
   }
 
