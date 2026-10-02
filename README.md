@@ -10,7 +10,7 @@
 
 ![侧边栏小条与用量面板](assets/overview.png)
 
-[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 111 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 120 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
 
 ## 目录
 
@@ -138,6 +138,28 @@ Sub2API 的 `sk-…` 接口**只按天返回**用量：请求里加 `granularity
 
 `复制 CSV` / `下载 CSV` 导出的就是这张表（按天视图则导出逐日数据），带 BOM 和 CRLF；`复制 JSON` 导出完整快照。**注意：DSH 自己的窗口会静默拦掉 blob 下载**（没有文件、也没有弹窗），而且"下载被取消"在页面里无法检测——所以「下载 CSV」在触发下载的**同时**把同一份内容放进剪贴板，提示语会说明到底发生了什么。没看到文件就直接粘到 Excel。
 
+#### 换成站点自己的小时接口（可选）
+
+站点确实有小时接口，只是要**登录令牌**。把「小时数据来源」改成 `site` 之后，宿主会走站点的 dashboard 接口：
+
+```
+POST /api/v1/auth/login              { email, password } → access_token
+GET  /api/v1/usage/dashboard/trend?start_date=&end_date=&granularity=hour&timezone=
+     → { code: 0, data: { trend: [ { date, requests, total_tokens, cost, actual_cost, … } ] } }
+```
+
+接口路径和字段名是从站点自己的前端 bundle 里读出来的（它的 `usage` API 模块和 dashboard 图表），不是猜的；`granularity` 在那个下拉框里确实只有 `day` / `hour` 两个值。认证方式三选一：**账号模式填邮箱密码**（宿主登录后拿 `access_token`）、**把浏览器里的 `auth_token` 填进凭证框**、或者管理员令牌（如果站点允许）。
+
+好处是**历史小时不用等采样**、来源是站点账本；代价和边界：
+
+| 情况 | 表现 |
+| --- | --- |
+| 站点接口失败（令牌过期 / 401 / 超时 / 返回结构不认识） | 面板里写明失败原因，同时**退回本机采样**继续画，绝不编数据 |
+| 账号开了两步验证 | 登录会停在 `/auth/login/2fa`：这时请把浏览器里的 `auth_token` 直接填进凭证框 |
+| 站点没返回某一小时 | 那一格是空（表格里写「站点没有返回这一小时」），不是 0 |
+| `date` 标签格式没见过 | 解析不了的行走「未解析计数」，不会被当成 0 混进曲线 |
+| 默认值 | `sampled`：不主动改，行为与以前完全一致，也不需要登录 |
+
 ### 明细
 
 三块内容：识别到的字段（扁平化的 `路径 = 值` 列表）、每个上游请求的 URL 与状态码、原始响应 JSON。**换了站点或接口返回格式变了，先来这里对字段**，再决定要不要填指针。
@@ -204,7 +226,7 @@ Sub2API 的 `sk-…` 接口**只按天返回**用量：请求里加 `granularity
 
 还有几个只在配置文件里、界面上没放输入框的项（一般用不到）：
 
-`paths.login`（`/api/v1/auth/login`）、`paths.profile`（`/api/v1/user/profile`）、`pointers.frozen`、`pointers.recharged`（不填也会自动识别 `frozen_balance` / `total_recharged`）、`page`、`pageSize`、`sortBy`、`sortOrder`、`currency`。
+`paths.login`（`/api/v1/auth/login`）、`paths.trend`（`/api/v1/usage/dashboard/trend`）、`paths.profile`（`/api/v1/user/profile`）、`pointers.frozen`、`pointers.recharged`（不填也会自动识别 `frozen_balance` / `total_recharged`）、`page`、`pageSize`、`sortBy`、`sortOrder`、`currency`。
 
 ### 刷新与显示
 
@@ -214,6 +236,7 @@ Sub2API 的 `sk-…` 接口**只按天返回**用量：请求里加 `granularity
 | 统计区间（天） | `rangeDays` | `30` | 1–365 |
 | 趋势默认粒度 | `granularity` | `day` | `day` 或 `hour`：面板打开时趋势图先显示哪种 | 
 | 小时区间（小时） | `hourlyHours` | `24` | 6–336（本机采样最多保留 14 天） |
+| 小时数据来源 | `hourlySource` | `sampled` | `sampled` = 插件本机采样；`site` = 站点自己的 dashboard 接口（要登录令牌，见下节） |
 | 低余额提醒阈值 | `lowBalance` | `5` | 余额低于它时小条和图标出现黄点 |
 | 货币符号 | `currencySymbol` | `$` | 只影响显示 |
 | 超时（毫秒） | `timeoutMs` | `15000` | 1000–120000 |
@@ -303,7 +326,7 @@ curl.exe -s -X POST http://127.0.0.1:19387/sub2api-usage/api/query -H "content-t
 
 ```powershell
 cd dsh-sub2api-usage
-npm test                        # 111 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 10 + 小时采样 12 + 客户端与图表 32 + 文档校验 7
+npm test                        # 120 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 10 + 小时采样 12 + 站点小时 8 + 客户端与图表 33 + 文档校验 7
 node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（自动找 DSH_HOME）
 ```
 
@@ -320,7 +343,7 @@ CI（`.github/workflows/test.yml`）就是这三个版本上跑这一条 `npm te
 | 改动的文件 | 生效方式 |
 | --- | --- |
 | `lib/client.js`、`lib/core.js` 里的展示逻辑、CSS | `node scripts/deploy.mjs` → 刷新页面（`F5`） |
-| `lib/index.js`（宿主路由）、`lib/core.js` 的归一化、`lib/store.js`、`lib/samples.js` | `deploy.mjs` → **重启 DSH**：宿主半区是 Node 模块，进程启动时加载一次，停用/启用插件不会重新导入 |
+| `lib/index.js`（宿主路由）、`lib/core.js` 的归一化、`lib/store.js`、`lib/samples.js`、`lib/site-hours.js` | `deploy.mjs` → **重启 DSH**：宿主半区是 Node 模块，进程启动时加载一次，停用/启用插件不会重新导入 |
 
 `test/mock-sub2api.mjs` 是一个本地假站点，覆盖 admin / key / user / custom / 超时 / 非 JSON 各种返回，既能被测试直接引用，也能单独跑起来手工验证：
 
@@ -342,6 +365,7 @@ dsh-sub2api-usage/
 │   ├── query.js          # 执行计划 + 错误分类
 │   ├── store.js          # 配置持久化（配置与凭证分开、原子写、单飞加载）
 │   ├── samples.js        # 小时采样：把「今天累计」的差值记进所属小时
+│   ├── site-hours.js     # 可选：站点 dashboard 小时接口（登录令牌）→ 同样的小时桶
 │   ├── index.js          # 宿主半区：/sub2api-usage/api/{state,config,query,test}
 │   └── client.js         # 浏览器半区：侧边栏小条 + 面板图标 + 主面板 + 折线图几何
 ├── scripts/

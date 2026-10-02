@@ -97,6 +97,38 @@ export function createMockSub2Api() {
       return;
     }
 
+    // The site's own hourly endpoint. Labels are wall-clock in the requested
+    // timezone, exactly like the frontend's chart expects (n.date).
+    if (url.pathname === '/api/v1/usage/dashboard/trend') {
+      if (bearer !== USER_TOKEN) {
+        send(res, 401, { code: 401, message: 'Invalid token' });
+        return;
+      }
+      const start = url.searchParams.get('start_date');
+      const end = url.searchParams.get('end_date');
+      const timezone = url.searchParams.get('timezone');
+      const granularity = url.searchParams.get('granularity') ?? 'day';
+      if (!start || !end || !timezone) {
+        send(res, 400, { code: 400, message: 'start_date/end_date/timezone are required' });
+        return;
+      }
+      if (granularity === 'day') {
+        send(res, 200, envelope({ trend: [
+          { date: '2026-09-30', requests: 1000, total_tokens: 25000, cost: 1, actual_cost: 0.9 },
+          { date: '2026-10-01', requests: 4200, total_tokens: 55996144, cost: 2, actual_cost: 1.5 },
+        ] }));
+        return;
+      }
+      // Two rows for one hour on purpose: the endpoint may be per-model, and the
+      // host must add them up rather than keep the last one.
+      send(res, 200, envelope({ trend: [
+        { date: `${start} 09:00`, requests: 3, total_tokens: 300, cost: 0.25, actual_cost: 0.2 },
+        { date: `${start}T09:30:00`, requests: 4, total_tokens: 400, cost: 0.5, actual_cost: 0.4 },
+        { date: `${end} 11:00`, requests: 30, total_tokens: 3000, cost: 1.5, actual_cost: 1.2 },
+      ] }));
+      return;
+    }
+
     if (url.pathname === '/v1/usage') {
       if (bearer !== SITE_KEY && !ANY_KEY) {
         send(res, 401, { code: 'INVALID_API_KEY', message: 'Invalid API key' });

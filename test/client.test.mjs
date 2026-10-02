@@ -721,6 +721,38 @@ test('the selection is announced, not only coloured', () => {
   }
 });
 
+test('the hourly view says where the hours came from, and why the site failed', () => {
+  const { registrations, harness } = setUpPlugin();
+
+  const siteTree = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    hourly: { ...FOUR_HOURS, source: 'site' },
+  })).tree;
+  assert.match(textOf(siteTree), /按小时 · \$3\.00 \/ 3 小时（站点接口）/);
+  assert.match(textOf(siteTree), /小时数据来自站点自己的 dashboard 接口/);
+  const siteRows = findAll(findNode(siteTree, (node) => node.type === 'tbody'), (node) => node.type === 'tr');
+  assert.deepEqual(
+    findAll(siteRows[1], (node) => node.type === 'td').map((node) => node.props.children).pop(),
+    '站点没有返回这一小时',
+    '站点数据里空的小时不是「插件没运行」',
+  );
+
+  const fellBack = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    hourly: {
+      ...FOUR_HOURS,
+      source: 'sampled',
+      sampledFallback: true,
+      siteError: { code: 'auth', message: '站点拒绝了登录令牌（401）：Invalid token', hint: '把 auth_token 填进凭证框' },
+    },
+  })).tree;
+  const warn = findNode(fellBack, (node) => node.props && node.props['data-tone'] === 'warn');
+  assert.ok(warn, '站点接口失败要在面板里说出来');
+  assert.match(textOf(warn), /站点小时接口失败：站点拒绝了登录令牌（401）：Invalid token/);
+  assert.match(textOf(warn), /把 auth_token 填进凭证框/);
+  assert.match(textOf(fellBack), /（本机采样）/, '退回时来源写的是本机采样');
+  const sampledRows = findAll(findNode(fellBack, (node) => node.type === 'tbody'), (node) => node.type === 'tr');
+  assert.equal(findAll(sampledRows[1], (node) => node.type === 'td').map((node) => node.props.children).pop(), '无采样（插件当时没运行）');
+});
+
 test('manual-only refresh is called out in the hourly footer', () => {
   const { registrations, harness } = setUpPlugin();
   const manual = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
