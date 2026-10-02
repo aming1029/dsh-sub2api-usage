@@ -114,6 +114,26 @@ test('a corrupt config file surfaces a readable error instead of crashing later'
   await assert.rejects(() => store.load(), /读取 .* 失败/);
 });
 
+test('a form save keeps the path and pointer keys the form does not render', async () => {
+  const dir = await makeDir();
+  await writeFile(join(dir, 'sub2api-usage.json'), JSON.stringify({
+    paths: { usage: '/v1/usage', trend: '/api/v1/usage/dashboard/trend', login: '/auth/login-v2' },
+    pointers: { balance: 'payload.wallet.balance' },
+  }));
+  const store = new ConfigStore(dir);
+  await store.load();
+  // Exactly what the settings form submits: the four path fields it renders and
+  // none of the advanced ones.
+  await store.update({ baseUrl: 'https://x.example.com', paths: { usage: '/v1/usage', me: '/api/v1/auth/me', adminUser: '/api/v1/admin/users/{id}', adminUsers: '/api/v1/admin/users' } });
+  assert.equal(store.full().paths.trend, '/api/v1/usage/dashboard/trend', 'paths.trend 不会被表单保存抹掉');
+  assert.equal(store.full().paths.login, '/auth/login-v2');
+  assert.equal(store.full().pointers.balance, 'payload.wallet.balance');
+  assert.equal(store.full().baseUrl, 'https://x.example.com');
+  // …and the merged result is what lands on disk, not just what is in memory.
+  const onDisk = JSON.parse(await readFile(join(dir, 'sub2api-usage.json'), 'utf8'));
+  assert.equal(onDisk.paths.trend, '/api/v1/usage/dashboard/trend');
+});
+
 test('paths() reports both files for the settings page', async () => {
   const dir = await makeDir();
   const store = new ConfigStore(dir);

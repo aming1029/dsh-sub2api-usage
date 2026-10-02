@@ -285,10 +285,22 @@ test('the detail tab shows raw responses, and the settings tab shows the custom-
   settingsTab.props.onClick();
   tree = harness.mount(harness.React.createElement(main.component, props));
   const settingsText = textOf(tree);
-  for (const needle of ['服务地址（可自定义）', '查询模式', '凭证', '余额 JSON 指针', '自动刷新间隔（秒）', '保存并查询', '测试连接（不保存）', '清除凭证']) {
+  for (const needle of ['服务地址（可自定义）', '查询模式', '凭证', '余额 JSON 指针', '自动刷新间隔（秒）', '小时数据来源', '保存并查询', '测试连接（不保存）', '清除凭证']) {
     assert.ok(settingsText.includes(needle), `设置页缺少「${needle}」`);
   }
   assert.match(settingsText, /配置文件：C:\/dsh\/sub2api-usage\.json/);
+
+  // The hourly source is a real setting, so it needs a control: a documented
+  // option nobody can reach from the GUI is not a feature.
+  const sourceSelect = findNode(tree, (node) => node.type === 'select' && node.props.value === 'sampled');
+  assert.ok(sourceSelect, '小时数据来源有下拉框，且默认选中本机采样');
+  assert.deepEqual(
+    findAll(sourceSelect, (node) => node.type === 'option').map((node) => [node.props.value, node.props.children]),
+    [['sampled', '本机采样'], ['site', '站点接口（要登录令牌）']],
+  );
+  sourceSelect.props.onChange({ target: { value: 'site' } });
+  tree = harness.mount(harness.React.createElement(main.component, props));
+  assert.match(textOf(tree), /需要登录令牌/, '选了站点接口要说明它需要登录令牌');
 
   // Switching the mode to "custom" reveals the free-form request editor.
   const modeSelect = findNode(tree, (node) => node.type === 'select' && node.props.value === 'auto');

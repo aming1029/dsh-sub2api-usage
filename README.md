@@ -10,7 +10,7 @@
 
 ![侧边栏小条与用量面板](assets/overview.png)
 
-[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 120 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+[![test](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml/badge.svg)](https://github.com/aming1029/dsh-sub2api-usage/actions/workflows/test.yml) **状态** v1.0.0 · **测试** 121 项 `node:test`（CI 在 Node 20 / 22 / 24 上跑 `npm test`），另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
 
 ## 目录
 
@@ -326,7 +326,7 @@ curl.exe -s -X POST http://127.0.0.1:19387/sub2api-usage/api/query -H "content-t
 
 ```powershell
 cd dsh-sub2api-usage
-npm test                        # 120 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 10 + 小时采样 12 + 站点小时 8 + 客户端与图表 33 + 文档校验 7
+npm test                        # 121 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 11 + 小时采样 12 + 站点小时 8 + 客户端与图表 33 + 文档校验 7
 node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（自动找 DSH_HOME）
 ```
 
