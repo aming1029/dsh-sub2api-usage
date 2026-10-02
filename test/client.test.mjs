@@ -669,3 +669,62 @@ test('an empty hour window explains why instead of looking broken', () => {
   assert.match(textOf(offWindow), /这个窗口内没有采样到小时数据/);
 });
 
+test('a sub-cent hour is not rounded away to $0.00', () => {
+  const { registrations, harness } = setUpPlugin();
+  // A quiet day on the live site is $0.0787, so single hours are often $0.00x.
+  const tiny = {
+    hours: 4,
+    from: '2026-09-30T22:00',
+    to: '2026-10-01T01:00',
+    retainedHours: 336,
+    samples: 5,
+    since: '2026-09-30T22:00',
+    buckets: [
+      { hour: '2026-09-30T22:00', cost: 0.0079, requests: 2, tokens: 400, spanMin: 2, partial: false },
+      { hour: '2026-09-30T23:00', cost: 0.00042, requests: 1, tokens: 120, spanMin: 2, partial: false },
+      { hour: '2026-10-01T00:00', cost: 0, requests: 0, tokens: 0, spanMin: 2, partial: false },
+      { hour: '2026-10-01T01:00', cost: 0.5, requests: 30, tokens: 3000, spanMin: 2, partial: false },
+    ],
+  };
+  const { tree, props } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({ hourly: tiny }));
+  const remount = () => harness.mount(harness.React.createElement(registrations.slots.find((slot) => slot.options.name === 'main').component, props));
+
+  const stats = textOf(findNode(tree, byClass('s2u-chart-stats')));
+  assert.match(stats, /\$0\.51/, '合计到了分位就照常显示');
+
+  findAll(tree, byClass('s2u-chart-hit'))[0].props.onMouseEnter();
+  assert.match(textOf(findNode(remount(), byClass('s2u-chart-tip'))), /花费 \$0\.0079/, '极小的花费给到两位有效数字');
+  findAll(remount(), byClass('s2u-chart-hit'))[1].props.onMouseEnter();
+  assert.match(textOf(findNode(remount(), byClass('s2u-chart-tip'))), /花费 \$0\.00042/);
+  findAll(remount(), byClass('s2u-chart-hit'))[2].props.onMouseEnter();
+  assert.match(textOf(findNode(remount(), byClass('s2u-chart-tip'))), /花费 \$0\.00 请求 0 次/, '真的没花钱还是 $0.00');
+});
+
+test('the selection is announced, not only coloured', () => {
+  const { registrations, harness } = setUpPlugin();
+  const { tree } = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    config: { ...CONFIG, granularity: 'hour', hourlyHours: 24 },
+  }));
+  const pressed = findAll(tree, (node) => node.type === 'button' && node.props['aria-pressed'] !== undefined);
+  assert.equal(pressed.length, 2 + 3 + 4, '粒度两个 + 指标三个 + 小时区间四个');
+  const active = pressed.filter((node) => node.props['aria-pressed'] === 'true');
+  assert.deepEqual(active.map((node) => node.props.children), ['按小时', '花费', '24 小时']);
+  for (const node of pressed) {
+    assert.equal(node.props['aria-pressed'], node.props['data-active'], 'aria-pressed 与视觉选中态一致');
+  }
+});
+
+test('manual-only refresh is called out in the hourly footer', () => {
+  const { registrations, harness } = setUpPlugin();
+  const manual = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    config: { ...CONFIG, granularity: 'hour', hourlyHours: 4, intervalSec: 0 },
+  })).tree;
+  assert.match(textOf(manual), /当前刷新间隔是 0（只手动刷新）/);
+
+  const auto = renderOverview(harness, registrations, THREE_DAYS, undefined, hourlyState({
+    config: { ...CONFIG, granularity: 'hour', hourlyHours: 4, intervalSec: 120 },
+  })).tree;
+  assert.equal(/当前刷新间隔是 0/.test(textOf(auto)), false);
+});
+
+

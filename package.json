@@ -37,7 +37,8 @@
     "@deepseek-ai/cordis": "^4.0.1"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test test/core.test.mjs test/query.test.mjs test/host.test.mjs test/store.test.mjs test/samples.test.mjs test/client.test.mjs test/readme.test.mjs",
+    "mock": "node scripts/mock-sub2api.mjs"
   },
   "license": "MIT",
   "author": "aming (https://github.com/aming1029)",

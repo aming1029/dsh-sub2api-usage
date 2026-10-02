@@ -188,9 +188,7 @@ export async function startMockSub2Api() {
   };
 }
 
-if (process.argv[1] && process.argv[1].endsWith('mock-sub2api.mjs')) {
-  const port = Number(process.argv[2] ?? 8799);
-  createMockSub2Api().listen(port, '127.0.0.1', () => {
-    console.log(`mock sub2api on http://127.0.0.1:${port}`);
-  });
-}
+// A runnable mock lives in scripts/mock-sub2api.mjs on purpose: `node --test`
+// treats every .mjs under test/ as a test file, so a self-starting server here
+// would listen forever and hang the run. Keep this module side-effect free.
+

@@ -96,3 +96,15 @@ test('the API routes documented for scripted use are the ones the host registers
     assert.ok(host.includes(`path === '${route}'`), `host half no longer serves ${route}`);
   }
 });
+
+test('npm test runs every test file, and the README documents that command', async () => {
+  const { readdir } = await import('node:fs/promises');
+  const pkg = JSON.parse(await readFile(join(ROOT, 'package.json'), 'utf8'));
+  const found = (await readdir(join(ROOT, 'test'))).filter((name) => name.endsWith('.test.mjs')).sort();
+  // `node --test` with no argument would also pick up test/harness.mjs and the
+  // mock, so the script names the files; that list must not drift.
+  assert.equal(pkg.scripts.test.startsWith('node --test '), true, `unexpected test script: ${pkg.scripts.test}`);
+  const listed = pkg.scripts.test.split(/\s+/).slice(2).map((path) => path.replace(/^test\//, '')).sort();
+  assert.deepEqual(listed, found, 'package.json 的 test 脚本与 test/ 下的测试文件不一致');
+  assert.ok(readme.includes('npm test'), 'README does not mention npm test');
+});

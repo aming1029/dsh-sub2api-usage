@@ -10,7 +10,7 @@
 
 ![侧边栏小条与用量面板](assets/overview.png)
 
-**状态** v1.0.0 · **测试** 102 项 `node:test`，另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
+**状态** v1.0.0 · **测试** 107 项 `node:test`，另在真实部署上跑通 · **依赖** DSH（带插件管理器）、Node ≥ 18 · **许可证** [MIT](LICENSE)
 
 ## 目录
 
@@ -295,9 +295,11 @@ curl.exe -s -X POST http://127.0.0.1:19387/sub2api-usage/api/query -H "content-t
 
 ```powershell
 cd dsh-sub2api-usage
-node --test "test/*.test.mjs"   # 102 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 10 + 小时采样 11 + 客户端与图表 25 + 文档校验 6
+npm test                        # 107 项：纯逻辑 21 + 上游端到端 13 + 宿主路由 16 + 配置存储 10 + 小时采样 12 + 客户端与图表 28 + 文档校验 7
 node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（自动找 DSH_HOME）
 ```
+
+> `npm test` 逐个点名测试文件是有原因的：`node --test`（不给参数）会把 `test/` 下**所有** `.mjs` 都当测试文件跑，包括 `harness.mjs` 和 `mock-sub2api.mjs`——后者一旦被当测试文件执行就会起一个永不退出的假站点，整个测试跟着挂住。所以 mock 的 CLI 入口放在 `scripts/mock-sub2api.mjs`，`test/` 下的模块保持零副作用，`test/readme.test.mjs` 里有一条测试盯着 `package.json` 的测试清单不能漏文件。
 
 `test/readme.test.mjs` 会检查这份文档本身：截图路径存在、目录锚点指向真实标题、写出来的默认值和 `lib/core.js` 的 `DEFAULT_CONFIG` 一致、脚本接口和 `lib/index.js` 注册的路由对得上。
 
@@ -313,7 +315,7 @@ node scripts/deploy.mjs         # 把改动同步到已安装它的 profile（�
 `test/mock-sub2api.mjs` 是一个本地假站点，覆盖 admin / key / user / custom / 超时 / 非 JSON 各种返回，既能被测试直接引用，也能单独跑起来手工验证：
 
 ```powershell
-node test/mock-sub2api.mjs 8799
+npm run mock                    # 等价于 node scripts/mock-sub2api.mjs 8799
 # 再把面板指向 http://127.0.0.1:8799，凭证填 sk-testkey1234567890
 ```
 
@@ -332,9 +334,11 @@ dsh-sub2api-usage/
 │   ├── samples.js        # 小时采样：把「今天累计」的差值记进所属小时
 │   ├── index.js          # 宿主半区：/sub2api-usage/api/{state,config,query,test}
 │   └── client.js         # 浏览器半区：侧边栏小条 + 面板图标 + 主面板 + 折线图几何
-├── scripts/deploy.mjs    # 同步到 profile
+├── scripts/
+│   ├── deploy.mjs        # 同步到 profile
+│   └── mock-sub2api.mjs  # 手工跑假站点（测试里零副作用的那个 mock 的 CLI 壳）
 ├── assets/               # README 截图
-└── test/                 # node:test 测试 + mock 站点
+└── test/                 # node:test 测试（*.test.mjs）+ 只导出函数的辅助模块
 ```
 
 `lib/client.js` 是手写的 `window.__ModuleLoader__.load({ id, factory })` 浏览器模块（无构建步骤、无 JSX），只 `require("react")` 这一个平台模块。

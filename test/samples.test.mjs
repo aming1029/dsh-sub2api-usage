@@ -215,3 +215,40 @@ test('read fills the window and marks unsampled hours as missing', async () => {
     cleanup();
   }
 });
+
+test('a damaged or foreign samples file is reported, not fatal', async () => {
+  const { dir, file, cleanup } = tempFile();
+  try {
+    const warnings = [];
+    // Not JSON at all: the host must warn and carry on with an empty series
+    // rather than fail every /query.
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(file, '{ this is not json', 'utf8');
+    const broken = createSampler({ file, warn: (message) => warnings.push(message) });
+    await broken.load();
+    assert.deepEqual(broken.buckets(), {});
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /小时采样文件读取失败/);
+    // And it recovers: the next sample writes a valid file.
+    const after = await broken.observe(snapshot({ cost: 2 }), { timezone: TZ, now: new Date('2026-10-01T10:00:00+08:00') });
+    assert.equal(after.added, false);
+    assert.equal(after.reason, 'baseline');
+
+    // Entries that are the wrong shape are dropped, valid ones survive.
+    writeFileSync(file, JSON.stringify({
+      version: 1,
+      samples: 3,
+      last: { at: '2026-10-01T02:00:00.000Z', day: '2026-10-01', hour: '10', cost: 5 },
+      buckets: { '2026-10-01T10:00': 'nonsense', '2026-10-01T09:00': { cost: '1.5', requests: 7, spanMin: 2 } },
+    }), 'utf8');
+    const mixed = createSampler({ file, warn: (message) => warnings.push(message) });
+    await mixed.load();
+    assert.deepEqual(Object.keys(mixed.buckets()), ['2026-10-01T09:00'], '坏桶丢掉，好桶留下');
+    assert.deepEqual(mixed.buckets()['2026-10-01T09:00'], { hour: '2026-10-01T09:00', cost: 1.5, actual: 0, requests: 7, tokens: 0, spanMin: 2, partial: false });
+    assert.equal(mixed.read(2, { timezone: TZ, now: new Date('2026-10-01T10:30:00+08:00') }).samples, 3);
+    assert.equal(cleanup !== undefined, true);
+    assert.equal(typeof dir, 'string');
+  } finally {
+    cleanup();
+  }
+});
